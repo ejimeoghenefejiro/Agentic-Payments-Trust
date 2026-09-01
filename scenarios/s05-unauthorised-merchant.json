@@ -1,0 +1,28 @@
+{
+  "ScenarioId": "S05",
+  "Description": "Unauthorised merchant: agent selects a merchant outside the approved supplier set",
+  "ExpectedDecision": "Escalate",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S05",
+    "Merchant": "Random Fuel Ltd",
+    "Amount": 20000,
+    "Reason": "fuel_sensor_below_threshold",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s05"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_886", "Type": "sensor_reading", "Description": "Fuel sensor 19%", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading"]
+}

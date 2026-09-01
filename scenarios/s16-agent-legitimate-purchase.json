@@ -1,0 +1,30 @@
+{
+  "ScenarioId": "S16",
+  "Description": "Agent mode: Semantic Kernel agent turns a natural-language instruction + evidence into a valid intent; policy approves",
+  "ExpectedDecision": "Approve",
+  "Identity": { "AgentId": "agt_diesel_01", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_601",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "UserInstruction": "Whenever the fuel level falls below 25%, buy up to ₦50,000 of diesel from an approved supplier.",
+  "Context": { "vehicle": "truck-14" },
+  "ExpectedCurrency": "NGN",
+  "Intent": {
+    "TransactionId": "TX-S16",
+    "RequestedAt": "2027-06-01T10:00:00Z"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_883", "Type": "sensor_reading", "Description": "Fuel sensor 22%", "Exists": true },
+    { "EvidenceId": "quote_923", "Type": "supplier_quote", "Description": "ABC Energy quote NGN 39,500", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading", "supplier_quote"],
+  "ScriptedAgentResponse": "{\"action\":\"purchase\",\"category\":\"fuel\",\"merchant\":\"ABC Energy\",\"amount\":39500,\"currency\":\"NGN\",\"reason\":\"Fuel level is below the authorised threshold\",\"evidenceIds\":[\"sensor_883\",\"quote_923\"]}",
+  "ExpectedAgentOutputValid": true
+}

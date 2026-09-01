@@ -1,0 +1,29 @@
+{
+  "ScenarioId": "S15",
+  "Description": "Payment-provider failure: trust decision is valid (Approve) but PSP returns an execution failure; must record failure, not a false success",
+  "ExpectedDecision": "Approve",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S15",
+    "Merchant": "ABC Energy",
+    "Amount": 20000,
+    "Reason": "fuel_sensor_below_threshold",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s15"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_894", "Type": "sensor_reading", "Description": "Fuel sensor 14%", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading"],
+  "ForcePaymentFailure": true
+}

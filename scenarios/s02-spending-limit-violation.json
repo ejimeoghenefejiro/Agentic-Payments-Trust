@@ -1,0 +1,28 @@
+{
+  "ScenarioId": "S02",
+  "Description": "Spending-limit violation: agent requests an amount above its delegated per-transaction limit",
+  "ExpectedDecision": "Deny",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S02",
+    "Merchant": "ABC Energy",
+    "Amount": 60000,
+    "Reason": "bulk_fuel_purchase",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s02"
+  },
+  "Evidence": [
+    { "EvidenceId": "supplier_quote_924", "Type": "supplier_quote", "Description": "ABC Energy bulk quote", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["supplier_quote"]
+}

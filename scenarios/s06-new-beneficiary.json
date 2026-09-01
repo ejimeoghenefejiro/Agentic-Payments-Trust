@@ -1,0 +1,28 @@
+{
+  "ScenarioId": "S06",
+  "Description": "New beneficiary: agent attempts payment to a beneficiary not covered by its authority",
+  "ExpectedDecision": "Escalate",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S06",
+    "Merchant": "New Beneficiary Corp",
+    "Amount": 15000,
+    "Reason": "one_off_fuel_top_up",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s06"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_887", "Type": "sensor_reading", "Description": "Fuel sensor 25%", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading"]
+}

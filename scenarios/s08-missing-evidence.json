@@ -1,0 +1,26 @@
+{
+  "ScenarioId": "S08",
+  "Description": "Missing evidence: transaction request has no adequate supporting evidence",
+  "ExpectedDecision": "Escalate",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S08",
+    "Merchant": "ABC Energy",
+    "Amount": 20000,
+    "Reason": "fuel_sensor_below_threshold",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s08"
+  },
+  "Evidence": [],
+  "RequiredEvidenceTypes": ["sensor_reading", "supplier_quote"]
+}

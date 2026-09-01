@@ -1,0 +1,28 @@
+{
+  "ScenarioId": "S14",
+  "Description": "Merchant-price anomaly: requested purchase is within limits but price is materially abnormal, and no price-justification evidence is provided",
+  "ExpectedDecision": "Escalate",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S14",
+    "Merchant": "ABC Energy",
+    "Amount": 38000,
+    "Reason": "fuel_price_spike",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s14"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_893", "Type": "sensor_reading", "Description": "Fuel sensor 12%", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading", "price_justification"]
+}

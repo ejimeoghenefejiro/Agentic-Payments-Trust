@@ -1,0 +1,28 @@
+{
+  "ScenarioId": "S13",
+  "Description": "Conflicting instructions: agent receives mutually inconsistent principal instructions, so required corroborating evidence is absent",
+  "ExpectedDecision": "Escalate",
+  "Identity": { "AgentId": "agt_821778", "PrincipalId": "org_abc_logistics", "CredentialStatus": "Active" },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S13",
+    "Merchant": "ABC Energy",
+    "Amount": 20000,
+    "Reason": "conflicting_principal_instructions",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s13"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_892", "Type": "sensor_reading", "Description": "Fuel sensor 30% (contradicts urgent-purchase instruction)", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading", "principal_confirmation"]
+}

@@ -1,0 +1,6 @@
+@AgentTrust.Api_HostAddress = http://localhost:5104
+
+GET {{AgentTrust.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

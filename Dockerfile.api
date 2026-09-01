@@ -1,0 +1,26 @@
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+
+COPY AgenticPaymentTrust.sln .
+COPY src/AgentTrust.Core/AgentTrust.Core.csproj src/AgentTrust.Core/
+COPY src/AgentTrust.Policy/AgentTrust.Policy.csproj src/AgentTrust.Policy/
+COPY src/AgentTrust.Payments/AgentTrust.Payments.csproj src/AgentTrust.Payments/
+COPY src/AgentTrust.Evidence/AgentTrust.Evidence.csproj src/AgentTrust.Evidence/
+COPY src/AgentTrust.Agents/AgentTrust.Agents.csproj src/AgentTrust.Agents/
+COPY src/AgentTrust.Orchestration/AgentTrust.Orchestration.csproj src/AgentTrust.Orchestration/
+COPY src/AgentTrust.Data/AgentTrust.Data.csproj src/AgentTrust.Data/
+COPY src/AgentTrust.Runner/AgentTrust.Runner.csproj src/AgentTrust.Runner/
+COPY src/AgentTrust.Api/AgentTrust.Api.csproj src/AgentTrust.Api/
+COPY tests/AgentTrust.Tests/AgentTrust.Tests.csproj tests/AgentTrust.Tests/
+RUN dotnet restore src/AgentTrust.Api/AgentTrust.Api.csproj
+
+COPY src/ src/
+RUN dotnet publish src/AgentTrust.Api/AgentTrust.Api.csproj -c Release -o /app/publish
+
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+WORKDIR /app
+COPY --from=build /app/publish .
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "AgentTrust.Api.dll"]

@@ -1,0 +1,33 @@
+{
+  "ScenarioId": "S01",
+  "Description": "Legitimate purchase: approved agent buys fuel from approved supplier within limits",
+  "ExpectedDecision": "Approve",
+  "Identity": {
+    "AgentId": "agt_821778",
+    "PrincipalId": "org_abc_logistics",
+    "CredentialStatus": "Active"
+  },
+  "Binding": { "Active": true },
+  "Authority": {
+    "AuthorityId": "auth_551",
+    "Permissions": ["purchase:fuel"],
+    "PerTransactionLimit": 50000,
+    "DailyLimit": 200000,
+    "ApprovedMerchants": ["ABC Energy"],
+    "HumanApprovalAbove": 40000,
+    "Expiry": "2027-12-31"
+  },
+  "Intent": {
+    "TransactionId": "TX-S01",
+    "Merchant": "ABC Energy",
+    "Amount": 39500,
+    "Reason": "fuel_sensor_below_threshold",
+    "RequestedAt": "2027-06-01T10:00:00Z",
+    "IdempotencyKey": "inv-s01"
+  },
+  "Evidence": [
+    { "EvidenceId": "sensor_883", "Type": "sensor_reading", "Description": "Fuel sensor 22%", "Exists": true },
+    { "EvidenceId": "supplier_quote_923", "Type": "supplier_quote", "Description": "ABC Energy quote", "Exists": true }
+  ],
+  "RequiredEvidenceTypes": ["sensor_reading", "supplier_quote"]
+}
