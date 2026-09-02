@@ -21,6 +21,9 @@
     <ProjectReference Include="..\AgentTrust.Agents\AgentTrust.Agents.csproj" />
     <ProjectReference Include="..\AgentTrust.Orchestration\AgentTrust.Orchestration.csproj" />
     <ProjectReference Include="..\AgentTrust.Data\AgentTrust.Data.csproj" />
+    <ProjectReference Include="..\AgentTrust.Intelligence\AgentTrust.Intelligence.csproj" />
+    <ProjectReference Include="..\AgentTrust.Data.Migrations.SqlServer\AgentTrust.Data.Migrations.SqlServer.csproj" />
+    <ProjectReference Include="..\AgentTrust.Data.Migrations.Postgres\AgentTrust.Data.Migrations.Postgres.csproj" />
   </ItemGroup>
 
 </Project>

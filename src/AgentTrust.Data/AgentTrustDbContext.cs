@@ -17,6 +17,8 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<PaymentOutcomeEntity> PaymentOutcomes => Set<PaymentOutcomeEntity>();
     public DbSet<ApprovalRequestEntity> Approvals => Set<ApprovalRequestEntity>();
     public DbSet<AuditRecordEntity> AuditRecords => Set<AuditRecordEntity>();
+    public DbSet<TransactionEventEntity> TransactionEvents => Set<TransactionEventEntity>();
+    public DbSet<ProfileSnapshotEntity> ProfileSnapshots => Set<ProfileSnapshotEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +59,20 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasKey(e => e.SequenceNumber);
             b.Property(e => e.SequenceNumber).ValueGeneratedNever();
             b.HasIndex(e => e.TransactionId);
+        });
+
+        modelBuilder.Entity<TransactionEventEntity>(b =>
+        {
+            b.HasKey(e => e.TransactionId);
+            b.HasIndex(e => e.CustomerId);
+            b.HasIndex(e => e.MerchantId);
+            b.Property(e => e.Amount).HasPrecision(18, 2);
+        });
+
+        modelBuilder.Entity<ProfileSnapshotEntity>(b =>
+        {
+            b.HasKey(e => e.Id);
+            b.HasIndex(e => e.EntityId);
         });
     }
 }

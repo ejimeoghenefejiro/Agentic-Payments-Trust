@@ -1,5 +1,9 @@
 using System.Text.Json;
+using AgentTrust.Orchestration;
+using AgentTrust.Payments;
 using AgentTrust.Runner;
+using AgentTrust.Runner.Experiments;
+using Microsoft.EntityFrameworkCore;
 
 var baseDir = AppContext.BaseDirectory;
 var repoRoot = FindRepoRoot(baseDir);
@@ -13,13 +17,150 @@ if (args.Contains("--demo"))
     return;
 }
 
+if (args.Contains("--intelligence-demo"))
+{
+    IntelligenceDemo.Run();
+    return;
+}
+
+if (args.Contains("--mandate-demo"))
+{
+    MandateDemo.Run();
+    return;
+}
+
+if (args.Contains("--intelligence-phase3-demo"))
+{
+    IntelligencePhase3Demo.Run();
+    return;
+}
+
 if (args.Contains("--cross-model"))
 {
     await RunCrossModelExperiment(scenariosDir, resultsDir);
     return;
 }
 
+if (args.Contains("--research-eval"))
+{
+    RunResearchEvaluation(args, resultsDir);
+    return;
+}
+
 await RunScenarioSuite(scenariosDir, resultsDir);
+
+static void RunResearchEvaluation(string[] args, string resultsDir)
+{
+    var seed = GetIntArg(args, "--seed", 42);
+    var count = GetIntArg(args, "--count", 1000);
+    var sqlServerConnection = Environment.GetEnvironmentVariable("SQLSERVER_CONNECTION");
+    var useSqlServer = args.Contains("--sql-server") || !string.IsNullOrWhiteSpace(sqlServerConnection);
+
+    IReadOnlyList<ExperimentResult> results;
+    AgentTrust.Evidence.AuditChainVerificationResult chainVerification;
+
+    if (useSqlServer)
+    {
+        if (string.IsNullOrWhiteSpace(sqlServerConnection))
+        {
+            Console.WriteLine("--sql-server was passed but SQLSERVER_CONNECTION is not set. Aborting.");
+            return;
+        }
+
+        Console.WriteLine($"Research Evaluation Phase 1: generating {count} scenarios (seed={seed}) against SQL Server...");
+        var options = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AgentTrust.Data.AgentTrustDbContext>()
+            .UseSqlServer(sqlServerConnection, x => x.MigrationsAssembly("AgentTrust.Data.Migrations.SqlServer"))
+            .Options;
+        using var db = new AgentTrust.Data.AgentTrustDbContext(options);
+        // A reproducible experiment must not depend on residual data from a previous run against
+        // this database (e.g. re-running the same seed produces the same transaction ids, which
+        // collided with leftover rows and broke a unique constraint before this was added) — so
+        // the experiments database is reset on every --sql-server run. This only ever targets
+        // whatever database SQLSERVER_CONNECTION points at for this command; it does not touch
+        // any other database on the server. Migrate() (not EnsureCreated()) so the experiment
+        // database's schema is produced the same way the real API's is — from the same
+        // migrations, not a separate reflection-based snapshot that could silently drift from them.
+        db.Database.EnsureDeleted();
+        db.Database.Migrate();
+
+        var agents = new AgentTrust.Data.EfAgentRegistry(db);
+        var bindings = new AgentTrust.Data.EfPrincipalBindingStore(db);
+        var authorities = new AgentTrust.Data.EfDelegatedAuthorityStore(db);
+        var ledger = new AgentTrust.Data.EfTransactionLedger(db);
+        var paymentAdapter = new MockPaymentAdapter();
+        var intentStore = new AgentTrust.Data.EfTransactionIntentStore(db);
+        var evidenceStore = new AgentTrust.Data.EfEvidenceManifestStore(db);
+        var policyStore = new AgentTrust.Data.EfPolicyDecisionStore(db);
+        var paymentStore = new AgentTrust.Data.EfPaymentOutcomeStore(db);
+        var approvalStore = new AgentTrust.Data.EfApprovalStore(db);
+        var auditStore = new AgentTrust.Data.EfAuditRecordStore(db);
+        var framework = new TrustFramework(agents, bindings, authorities, ledger, paymentAdapter,
+            intentStore, evidenceStore, policyStore, paymentStore, approvalStore, auditStore);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        (results, chainVerification) = ExperimentRunner.Run(seed, count, agents, bindings, authorities, paymentAdapter, framework);
+        stopwatch.Stop();
+        Console.WriteLine($"SQL Server run completed in {stopwatch.Elapsed.TotalSeconds:F1}s ({count} scenarios, each writing agent/binding/authority/intent/evidence/policy/payment/audit rows).");
+    }
+    else
+    {
+        Console.WriteLine($"Research Evaluation Phase 1: generating {count} scenarios (seed={seed}) in-memory...");
+        (results, chainVerification) = ExperimentRunner.Run(seed, count);
+    }
+
+    var metrics = MetricsCalculator.Compute(results, chainVerification);
+
+    var backendSuffix = useSqlServer ? "_sqlserver" : "_inmemory";
+    var outputDir = Path.Combine(resultsDir, "experiments", $"run_seed{seed}_n{count}{backendSuffix}");
+    ExperimentReportWriter.Write(outputDir, seed, results, metrics);
+
+    Console.WriteLine();
+    Console.WriteLine($"N = {metrics.TotalScenarios} transaction scenarios");
+    Console.WriteLine();
+    Console.WriteLine($"Policy Enforcement Accuracy:        {metrics.PolicyEnforcementAccuracy:P1}");
+    Console.WriteLine($"Unauthorized Prevention Rate:       {metrics.UnauthorizedTransactionPreventionRate:P1}");
+    Console.WriteLine($"Authorized Acceptance Rate:         {metrics.AuthorizedTransactionAcceptanceRate:P1}");
+    Console.WriteLine($"Revocation Enforcement Rate:        {metrics.RevocationEnforcementRate:P1}");
+    Console.WriteLine($"Human Escalation Accuracy:          {metrics.HumanEscalationAccuracy:P1}");
+    Console.WriteLine($"Reason-Code Accuracy:               {metrics.ReasonCodeAccuracy:P1}");
+    Console.WriteLine();
+    Console.WriteLine($"Evidence Precision:                 {metrics.EvidencePrecision:P1}");
+    Console.WriteLine($"Evidence Recall:                    {metrics.EvidenceRecall:P1}");
+    Console.WriteLine($"Evidence F1:                        {metrics.EvidenceF1:P1}");
+    Console.WriteLine();
+    Console.WriteLine($"Audit Reconstruction Rate:          {metrics.AuditReconstructionRate:P1}");
+    Console.WriteLine($"Audit Chain Valid:                  {metrics.AuditChainValid}");
+    Console.WriteLine();
+    Console.WriteLine($"Median policy latency:               {metrics.MedianPolicyLatencyMs:F3} ms");
+    Console.WriteLine($"P95 policy latency:                  {metrics.P95PolicyLatencyMs:F3} ms");
+    Console.WriteLine($"P99 policy latency:                  {metrics.P99PolicyLatencyMs:F3} ms");
+    Console.WriteLine($"Median wall latency (incl. overhead): {metrics.MedianWallLatencyMs:F3} ms");
+    Console.WriteLine($"P95 wall latency (incl. overhead):    {metrics.P95WallLatencyMs:F3} ms");
+    Console.WriteLine();
+    Console.WriteLine("=== Adversarial subset (prompt injection, duplicate payment, credential attack, authority-scope violation) ===");
+    Console.WriteLine($"Attack scenarios:        {metrics.Adversarial.AttackScenarios}");
+    Console.WriteLine($"Attack Success Rate:     {metrics.Adversarial.AttackSuccessRate:P1}  (lower is better)");
+    Console.WriteLine($"Attack Prevention Rate:  {metrics.Adversarial.AttackPreventionRate:P1}");
+    Console.WriteLine($"False Positive Rate:     {metrics.Adversarial.FalsePositiveRate:P1}  (legitimate transactions incorrectly blocked)");
+    Console.WriteLine($"False Negative Rate:     {metrics.Adversarial.FalseNegativeRate:P1}  (attacks incorrectly approved)");
+    Console.WriteLine();
+    Console.WriteLine("=== Per-category ===");
+    foreach (var c in metrics.PerCategory)
+    {
+        Console.WriteLine($"  {c.Category,-28} n={c.Count,-6} decision_acc={c.DecisionAccuracy:P1}  reason_acc={c.ReasonCodeAccuracy:P1}  evidence_f1={c.AverageEvidenceF1:F2}  median_latency={c.MedianPolicyLatencyMs:F3}ms");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Results written to {outputDir}");
+    Console.WriteLine($"  results.csv, per_category.csv, confusion_matrix.csv, summary.json");
+    Console.WriteLine($"Reproduce with: dotnet run --project src/AgentTrust.Runner -- --research-eval --seed {seed} --count {count}");
+}
+
+static int GetIntArg(string[] args, string name, int defaultValue)
+{
+    var index = Array.IndexOf(args, name);
+    if (index < 0 || index + 1 >= args.Length) return defaultValue;
+    return int.TryParse(args[index + 1], out var value) ? value : defaultValue;
+}
 
 static async Task RunScenarioSuite(string scenariosDir, string resultsDir)
 {

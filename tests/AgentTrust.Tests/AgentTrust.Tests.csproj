@@ -29,6 +29,11 @@
     <ProjectReference Include="..\..\src\AgentTrust.Runner\AgentTrust.Runner.csproj" />
     <ProjectReference Include="..\..\src\AgentTrust.Data\AgentTrust.Data.csproj" />
     <ProjectReference Include="..\..\src\AgentTrust.Api\AgentTrust.Api.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Intelligence\AgentTrust.Intelligence.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.PaymentMethods\AgentTrust.PaymentMethods.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Mandates\AgentTrust.Mandates.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Tasks\AgentTrust.Tasks.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Scheduling\AgentTrust.Scheduling.csproj" />
   </ItemGroup>
 
 </Project>

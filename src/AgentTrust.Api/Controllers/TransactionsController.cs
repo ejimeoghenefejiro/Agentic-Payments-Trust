@@ -1,5 +1,8 @@
 using AgentTrust.Agents;
 using AgentTrust.Core.Models;
+using AgentTrust.Intelligence.Graph;
+using AgentTrust.Intelligence.Investigation;
+using AgentTrust.Intelligence.Risk;
 using AgentTrust.Orchestration;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,7 +13,15 @@ namespace AgentTrust.Api.Controllers;
 public sealed class TransactionsController : ControllerBase
 {
     private readonly TrustFramework _framework;
-    public TransactionsController(TrustFramework framework) => _framework = framework;
+    private readonly ITransactionEventStore _eventStore;
+    private readonly InvestigationPlanner _investigationPlanner;
+
+    public TransactionsController(TrustFramework framework, ITransactionEventStore eventStore, InvestigationPlanner investigationPlanner)
+    {
+        _framework = framework;
+        _eventStore = eventStore;
+        _investigationPlanner = investigationPlanner;
+    }
 
     /// <summary>
     /// Supports natural-language agent-driven execution: set UserInstruction and the request
@@ -60,6 +71,22 @@ public sealed class TransactionsController : ControllerBase
                 request.Amount ?? 0, request.Reason ?? "", evidence, DateTimeOffset.UtcNow, request.IdempotencyKey);
         }
 
+        MultiStepInvestigationResult? investigation = null;
+        if (request.CandidateEvent is not null)
+        {
+            var candidate = request.CandidateEvent.ToDomain();
+            var merchantHistory = _eventStore.GetMerchantHistory(candidate.MerchantId);
+            var graph = RelationshipAnalyzer.BuildGraph(merchantHistory.Append(candidate));
+            investigation = _investigationPlanner.Investigate(candidate, graph);
+
+            // Merge intelligence evidence into the same manifest the trust layer will see —
+            // advisory only: this never changes the decision logic itself, only what evidence
+            // is on record for the (unmodified) PolicyEngine's evidence-sufficiency check and
+            // for the audit trail.
+            intent = intent with { Evidence = intent.Evidence.Concat(investigation.FinalAssessment.EvidenceReferences).ToList() };
+            _eventStore.Record(candidate);
+        }
+
         var manifest = new EvidenceManifest(intent.TransactionId, intent.Evidence.ToList(), Array.Empty<string>());
         var outcome = _framework.ProcessTransaction(intent, manifest);
 
@@ -71,7 +98,14 @@ public sealed class TransactionsController : ControllerBase
             paymentStatus = outcome.PaymentResult.Status.ToString(),
             agentLatencyMs = agentProposal?.AgentLatencyMs,
             policyLatencyMs = outcome.LatencyMs,
-            auditRecordHash = outcome.Audit.EvidenceHash
+            auditRecordHash = outcome.Audit.EvidenceHash,
+            intelligence = investigation is null ? null : new
+            {
+                recommendation = investigation.FinalAssessment.Recommendation.ToString(),
+                riskScore = investigation.FinalAssessment.RiskScore,
+                riskFactors = investigation.FinalAssessment.RiskFactors,
+                steps = investigation.Steps
+            }
         });
     }
 

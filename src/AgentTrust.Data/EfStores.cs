@@ -409,8 +409,23 @@ public sealed class EfApprovalStore : IApprovalStore
             Reason = request.Reason,
             FinalOutcome = request.FinalOutcome?.ToString()
         };
-        if (existing is null) _db.Approvals.Add(entity);
-        else _db.Entry(existing).CurrentValues.SetValues(entity);
+        if (existing is null)
+        {
+            _db.Approvals.Add(entity);
+        }
+        else if (existing.ApprovalId == entity.ApprovalId)
+        {
+            _db.Entry(existing).CurrentValues.SetValues(entity);
+        }
+        else
+        {
+            // ApprovalId is the primary key; EF refuses to change a tracked entity's key via
+            // SetValues. A different ApprovalId for the same TransactionId means a stale row
+            // (e.g. leftover data from a prior run against this database) — replace it rather
+            // than update in place.
+            _db.Approvals.Remove(existing);
+            _db.Approvals.Add(entity);
+        }
         _db.SaveChanges();
     }
 

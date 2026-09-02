@@ -13,6 +13,17 @@ namespace AgentTrust.Agents;
 /// </summary>
 public static class AgentFactory
 {
+    /// <summary>
+    /// Optional overrides, set once at process startup from configuration (e.g. a host reads
+    /// "OpenAI:ApiKey" / "OpenAI:Model" out of appsettings.json and assigns these). Takes
+    /// priority over the OPENAI_API_KEY / OPENAI_MODEL environment variables when set. Kept as
+    /// static settable properties rather than a constructor/DI dependency so this stays a
+    /// plain static factory usable from the Runner (no DI container) and the Api (DI container)
+    /// alike.
+    /// </summary>
+    public static string? ConfiguredApiKey { get; set; }
+    public static string? ConfiguredModel { get; set; }
+
     public static IPaymentAgent CreateScripted(string agentId, string scriptedJsonResponse)
     {
         var builder = Kernel.CreateBuilder();
@@ -22,21 +33,23 @@ public static class AgentFactory
     }
 
     /// <summary>
-    /// Builds a live agent against an OpenAI-compatible connector. Reads OPENAI_API_KEY
-    /// (required) and OPENAI_MODEL (defaults to gpt-4o-mini) from environment variables.
-    /// Throws InvalidOperationException if OPENAI_API_KEY is not set — callers should check
-    /// IsLiveModeConfigured first if they want to fall back gracefully.
+    /// Builds a live agent against an OpenAI-compatible connector. Resolves the API key from
+    /// ConfiguredApiKey first, then the OPENAI_API_KEY environment variable; same precedence
+    /// for the model (default gpt-4o-mini). Throws InvalidOperationException if no key is
+    /// configured either way — callers should check IsLiveModeConfigured first if they want to
+    /// fall back gracefully.
     /// </summary>
     public static IPaymentAgent CreateLive(string agentId)
     {
-        var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+        var apiKey = ConfiguredApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException(
-                "OPENAI_API_KEY is not set. Set it to run the agent against a real LLM, or use AgentFactory.CreateScripted for deterministic/offline runs.");
+                "No OpenAI API key configured. Set AgentFactory.ConfiguredApiKey, the OPENAI_API_KEY environment variable, " +
+                "or use AgentFactory.CreateScripted for deterministic/offline runs.");
         }
 
-        var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+        var model = ConfiguredModel ?? Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion(model, apiKey);
         var kernel = builder.Build();
@@ -44,5 +57,5 @@ public static class AgentFactory
     }
 
     public static bool IsLiveModeConfigured =>
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+        !string.IsNullOrWhiteSpace(ConfiguredApiKey) || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
 }

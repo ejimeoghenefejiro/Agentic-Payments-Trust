@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentTrust.Mandates\AgentTrust.Mandates.csproj" />
+    <ProjectReference Include="..\AgentTrust.PaymentMethods\AgentTrust.PaymentMethods.csproj" />
+    <ProjectReference Include="..\AgentTrust.Orchestration\AgentTrust.Orchestration.csproj" />
+    <ProjectReference Include="..\AgentTrust.Payments\AgentTrust.Payments.csproj" />
+    <ProjectReference Include="..\AgentTrust.Core\AgentTrust.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

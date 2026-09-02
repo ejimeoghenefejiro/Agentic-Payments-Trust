@@ -7,6 +7,17 @@
     <ProjectReference Include="..\AgentTrust.Evidence\AgentTrust.Evidence.csproj" />
     <ProjectReference Include="..\AgentTrust.Agents\AgentTrust.Agents.csproj" />
     <ProjectReference Include="..\AgentTrust.Orchestration\AgentTrust.Orchestration.csproj" />
+    <ProjectReference Include="..\AgentTrust.Data\AgentTrust.Data.csproj" />
+    <ProjectReference Include="..\AgentTrust.Intelligence\AgentTrust.Intelligence.csproj" />
+    <ProjectReference Include="..\AgentTrust.PaymentMethods\AgentTrust.PaymentMethods.csproj" />
+    <ProjectReference Include="..\AgentTrust.Mandates\AgentTrust.Mandates.csproj" />
+    <ProjectReference Include="..\AgentTrust.Tasks\AgentTrust.Tasks.csproj" />
+    <ProjectReference Include="..\AgentTrust.Scheduling\AgentTrust.Scheduling.csproj" />
+    <ProjectReference Include="..\AgentTrust.Data.Migrations.SqlServer\AgentTrust.Data.Migrations.SqlServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.9" />
   </ItemGroup>
 
   <PropertyGroup>

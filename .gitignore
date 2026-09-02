@@ -5,3 +5,4 @@ results-docker/
 *.user
 .vs/
 .env
+appsettings.Development.json
