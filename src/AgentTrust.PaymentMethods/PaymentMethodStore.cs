@@ -46,6 +46,19 @@ public sealed class PaymentMethodService
         return method;
     }
 
+    /// <summary>Production-preferred connection flow. A PSP-hosted field tokenises the card in
+    /// the browser, so this backend receives only the token and display-safe metadata.</summary>
+    public PaymentMethod ConnectProviderToken(string principalId, string provider, string providerToken,
+        string cardBrand, string last4, int expiryMonth, int expiryYear)
+    {
+        if (string.IsNullOrWhiteSpace(providerToken)) throw new ArgumentException("Provider token is required.", nameof(providerToken));
+        if (last4.Length != 4 || !last4.All(char.IsDigit)) throw new ArgumentException("Last4 must contain four digits.", nameof(last4));
+        var method = new PaymentMethod($"pm_{Guid.NewGuid():N}", principalId, provider, providerToken,
+            cardBrand, last4, expiryMonth, expiryYear, PaymentMethodStatus.Active);
+        _store.Save(method);
+        return method;
+    }
+
     public void Revoke(string paymentMethodId)
     {
         var method = _store.Find(paymentMethodId);

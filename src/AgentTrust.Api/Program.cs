@@ -87,6 +87,7 @@ else
 }
 
 builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
+builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>();
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext
@@ -125,7 +126,8 @@ builder.Services.AddScoped<TrustFramework>(sp => new TrustFramework(
     sp.GetRequiredService<IPolicyDecisionStore>(),
     sp.GetRequiredService<IPaymentOutcomeStore>(),
     sp.GetRequiredService<IApprovalStore>(),
-    sp.GetRequiredService<IAuditRecordStore>()));
+    sp.GetRequiredService<IAuditRecordStore>(),
+    sp.GetRequiredService<IPaymentAttemptStore>()));
 
 var app = builder.Build();
 

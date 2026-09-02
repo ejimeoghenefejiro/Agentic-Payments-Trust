@@ -20,15 +20,18 @@ public sealed class ScheduledTaskRunner
     private readonly IMandateStore _mandates;
     private readonly TaskExecutionOrchestrator _orchestrator;
     private readonly IPriceQuoteProvider _quoteProvider;
+    private readonly IScheduledOccurrenceStore _occurrences;
 
     public ScheduledTaskRunner(ITaskStore tasks, IScheduleStore schedules, IMandateStore mandates,
-        TaskExecutionOrchestrator orchestrator, IPriceQuoteProvider quoteProvider)
+        TaskExecutionOrchestrator orchestrator, IPriceQuoteProvider quoteProvider,
+        IScheduledOccurrenceStore? occurrences = null)
     {
         _tasks = tasks;
         _schedules = schedules;
         _mandates = mandates;
         _orchestrator = orchestrator;
         _quoteProvider = quoteProvider;
+        _occurrences = occurrences ?? new InMemoryScheduledOccurrenceStore();
     }
 
     public IReadOnlyList<TaskExecutionResult> RunDueTasks(string agentId, DateTimeOffset now)
@@ -48,8 +51,13 @@ public sealed class ScheduledTaskRunner
                 continue;
             }
 
+            if (!_occurrences.TryClaim(task.TaskId, schedule.ScheduledOccurrence(now), now, out var occurrence))
+                continue;
+
             var quote = _quoteProvider.GetQuote(mandate.Merchant, task.Parameters);
-            results.Add(_orchestrator.Execute(task, quote, task.Parameters, now));
+            var result = _orchestrator.Execute(task, quote, task.Parameters, now);
+            _occurrences.Complete(occurrence!.OccurrenceId, result.PaymentStatus == AgentTrust.Core.Models.PaymentStatus.Success);
+            results.Add(result);
         }
         return results;
     }

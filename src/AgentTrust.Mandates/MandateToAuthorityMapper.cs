@@ -26,13 +26,10 @@ public static class MandateToAuthorityMapper
             AgentId: mandate.AgentId,
             Permissions: new[] { $"purchase:{mandate.Purpose}" },
             PerTransactionLimit: effectiveLimit,
-            // Weekly/monthly caps are enforced by MandateEvaluationService against
-            // IMandateUsageTracker before a call ever reaches the trust layer — the trust
-            // layer's own DailyLimit must not duplicate that (a second, independent cap set to
-            // the weekly figure would reject a same-day amount the mandate layer already
-            // approved, exactly as it did before this fix). It tracks the per-transaction limit
-            // instead, so a single authorised transaction is never rejected by it.
-            DailyLimit: effectiveLimit,
+            // The atomic mandate reservation is authoritative for daily/weekly/monthly usage.
+            // Mirror an explicit daily cap here, but do not accidentally turn the per-transaction
+            // limit into a one-transaction-per-day limit when no daily cap was granted.
+            DailyLimit: oneOffApprovedAmount is not null ? decimal.MaxValue : mandate.DailyLimit ?? decimal.MaxValue,
             ApprovedMerchants: new[] { mandate.Merchant },
             CategoryScope: new[] { mandate.Purpose },
             GeographicScope: "ANY",

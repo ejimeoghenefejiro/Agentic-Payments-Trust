@@ -6,6 +6,19 @@ namespace AgentTrust.Tests.Mandates;
 public class PaymentMethodServiceTests
 {
     [Fact]
+    public void ProviderHostedTokenCanBeConnectedWithoutBackendCardData()
+    {
+        var store = new InMemoryPaymentMethodStore();
+        var service = new PaymentMethodService(new MockCardTokenizationProvider(), store);
+
+        var method = service.ConnectProviderToken("P1", "Stripe", "pm_provider_123", "Visa", "4242", 9, 2029);
+
+        Assert.Equal("pm_provider_123", method.Token);
+        Assert.Equal("P1", method.PrincipalId);
+        Assert.Equal(PaymentMethodStatus.Active, method.Status);
+    }
+
+    [Fact]
     public void ConnectingACardStoresOnlyTokenAndDisplayMetadata()
     {
         var service = new PaymentMethodService(new MockCardTokenizationProvider(), new InMemoryPaymentMethodStore());

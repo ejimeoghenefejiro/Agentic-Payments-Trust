@@ -4,17 +4,36 @@ public interface IMandateStore
 {
     void Save(FinancialMandate mandate);
     FinancialMandate? Find(string mandateId);
+    FinancialMandate? FindVersion(string mandateId, int version);
+    IReadOnlyList<FinancialMandate> GetHistory(string mandateId);
     IReadOnlyList<FinancialMandate> FindByAgent(string agentId);
 }
 
 public sealed class InMemoryMandateStore : IMandateStore
 {
-    private readonly Dictionary<string, FinancialMandate> _mandates = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<(string Id, int Version), FinancialMandate> _mandates = new();
 
-    public void Save(FinancialMandate mandate) => _mandates[mandate.MandateId] = mandate;
+    public void Save(FinancialMandate mandate)
+    {
+        lock (_gate)
+        {
+            var active = _mandates.Values.FirstOrDefault(m => m.MandateId == mandate.MandateId && m.Status == MandateStatus.Active);
+            if (active is not null && mandate.Version > active.Version)
+                _mandates[(active.MandateId, active.Version)] = active with { Status = MandateStatus.Superseded };
+            _mandates[(mandate.MandateId, mandate.Version)] = mandate;
+        }
+    }
 
-    public FinancialMandate? Find(string mandateId) => _mandates.GetValueOrDefault(mandateId);
+    public FinancialMandate? Find(string mandateId)
+    { lock (_gate) return _mandates.Values.Where(m => m.MandateId == mandateId).OrderByDescending(m => m.Version).FirstOrDefault(); }
 
-    public IReadOnlyList<FinancialMandate> FindByAgent(string agentId) =>
-        _mandates.Values.Where(m => m.AgentId == agentId).ToList();
+    public FinancialMandate? FindVersion(string mandateId, int version)
+    { lock (_gate) return _mandates.GetValueOrDefault((mandateId, version)); }
+
+    public IReadOnlyList<FinancialMandate> GetHistory(string mandateId)
+    { lock (_gate) return _mandates.Values.Where(m => m.MandateId == mandateId).OrderBy(m => m.Version).ToList(); }
+
+    public IReadOnlyList<FinancialMandate> FindByAgent(string agentId)
+    { lock (_gate) return _mandates.Values.Where(m => m.AgentId == agentId).ToList(); }
 }

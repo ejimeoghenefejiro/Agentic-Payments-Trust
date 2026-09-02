@@ -4,7 +4,8 @@ public enum MandateStatus
 {
     Active,
     Suspended,
-    Expired
+    Expired,
+    Superseded
 }
 
 public enum AboveLimitAction
@@ -38,5 +39,10 @@ public sealed record FinancialMandate(
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt)
 {
+    public int Version { get; init; } = 1;
+    public string? SupersedesMandateId { get; init; }
+    public DateTimeOffset EffectiveFrom { get; init; } = CreatedAt;
+    public decimal? DailyLimit { get; init; }
+
     public bool IsActive(DateTimeOffset asOf) => Status == MandateStatus.Active && asOf <= ExpiresAt;
 }

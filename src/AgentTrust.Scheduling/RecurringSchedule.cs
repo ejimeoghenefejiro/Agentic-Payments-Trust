@@ -10,6 +10,9 @@ public sealed record RecurringSchedule(DayOfWeek DayOfWeek, TimeOnly TimeOfDay, 
         now.DayOfWeek == DayOfWeek &&
         Math.Abs((TimeOnly.FromDateTime(now.UtcDateTime) - TimeOfDay).TotalMinutes) <= Tolerance.TotalMinutes;
 
+    public DateTimeOffset ScheduledOccurrence(DateTimeOffset now) =>
+        new(now.Year, now.Month, now.Day, TimeOfDay.Hour, TimeOfDay.Minute, TimeOfDay.Second, now.Offset);
+
     public DateTimeOffset NextOccurrenceAfter(DateTimeOffset from)
     {
         var daysUntil = ((int)DayOfWeek - (int)from.DayOfWeek + 7) % 7;

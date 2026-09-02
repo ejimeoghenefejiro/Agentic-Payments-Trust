@@ -24,7 +24,7 @@ public sealed class PolicyEngine
         _ledger = ledger;
     }
 
-    public PolicyDecisionResult Evaluate(TransactionIntent intent, EvidenceManifest evidence)
+    public PolicyDecisionResult Evaluate(TransactionIntent intent, EvidenceManifest evidence, DelegatedAuthority? transactionScopedAuthority = null)
     {
         var checks = new List<PolicyCheck>();
         var reasonCodes = new List<string>();
@@ -51,7 +51,9 @@ public sealed class PolicyEngine
             return Deny(intent, checks, reasonCodes);
         }
 
-        var authority = _authorities.FindByAgent(intent.AgentId);
+        var authority = transactionScopedAuthority is not null && transactionScopedAuthority.AgentId == intent.AgentId
+            ? transactionScopedAuthority
+            : _authorities.FindByAgent(intent.AgentId);
         bool authorityActive = authority is not null && authority.IsActive(today);
         checks.Add(new PolicyCheck("AuthorityActive", authorityActive,
             authorityActive ? "Delegated authority is active and unexpired" : "Authority missing, revoked, or expired"));

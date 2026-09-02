@@ -21,7 +21,6 @@ public sealed class TrustFramework
     private readonly IDelegatedAuthorityStore _authorities;
     private readonly ITransactionLedger _ledger;
     private readonly PolicyEngine _policyEngine;
-    private readonly IPaymentAdapter _paymentAdapter;
     private readonly EvidenceService _evidenceService;
     private readonly AuditLedger _auditLedger;
     private readonly ITransactionIntentStore _intentStore;
@@ -29,6 +28,7 @@ public sealed class TrustFramework
     private readonly IPolicyDecisionStore _policyDecisionStore;
     private readonly IPaymentOutcomeStore _paymentOutcomeStore;
     private readonly IApprovalStore _approvalStore;
+    private readonly PaymentExecutionCoordinator _paymentExecution;
 
     public AuditLedger AuditLedger => _auditLedger;
     public ITransactionLedger Ledger => _ledger;
@@ -44,13 +44,13 @@ public sealed class TrustFramework
         IPolicyDecisionStore? policyDecisionStore = null,
         IPaymentOutcomeStore? paymentOutcomeStore = null,
         IApprovalStore? approvalStore = null,
-        IAuditRecordStore? persistentAuditStore = null)
+        IAuditRecordStore? persistentAuditStore = null,
+        IPaymentAttemptStore? paymentAttemptStore = null)
     {
         _agents = agents;
         _bindings = bindings;
         _authorities = authorities;
         _ledger = ledger;
-        _paymentAdapter = paymentAdapter;
         _policyEngine = new PolicyEngine(agents, bindings, authorities, ledger);
         _evidenceService = new EvidenceService();
         _intentStore = intentStore ?? new InMemoryTransactionIntentStore();
@@ -58,26 +58,28 @@ public sealed class TrustFramework
         _policyDecisionStore = policyDecisionStore ?? new InMemoryPolicyDecisionStore();
         _paymentOutcomeStore = paymentOutcomeStore ?? new InMemoryPaymentOutcomeStore();
         _approvalStore = approvalStore ?? new InMemoryApprovalStore();
+        _paymentExecution = new PaymentExecutionCoordinator(paymentAdapter, paymentAttemptStore ?? new InMemoryPaymentAttemptStore());
         _auditLedger = persistentAuditStore is null ? new AuditLedger() : new AuditLedger(persistentAuditStore);
     }
 
     public sealed record Outcome(PolicyDecisionResult PolicyDecision, PaymentResult PaymentResult, AuditRecord Audit, long LatencyMs);
 
-    public Outcome ProcessTransaction(TransactionIntent intent, EvidenceManifest evidenceManifest)
+    public Outcome ProcessTransaction(TransactionIntent intent, EvidenceManifest evidenceManifest,
+        DelegatedAuthority? transactionScopedAuthority = null)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         _intentStore.Save(intent);
         _evidenceManifestStore.Save(evidenceManifest);
 
-        var policyDecision = _policyEngine.Evaluate(intent, evidenceManifest);
+        var policyDecision = _policyEngine.Evaluate(intent, evidenceManifest, transactionScopedAuthority);
         _policyDecisionStore.Save(policyDecision);
         _ledger.Record(intent, policyDecision.Decision);
 
         PaymentResult paymentResult;
         if (policyDecision.Decision == Decision.Approve)
         {
-            paymentResult = _paymentAdapter.Submit(intent);
+            paymentResult = _paymentExecution.Submit(intent);
         }
         else
         {
@@ -91,7 +93,7 @@ public sealed class TrustFramework
         }
         _paymentOutcomeStore.Save(paymentResult);
 
-        var authorityId = _authorities.FindByAgent(intent.AgentId)?.AuthorityId ?? "unknown";
+        var authorityId = transactionScopedAuthority?.AuthorityId ?? _authorities.FindByAgent(intent.AgentId)?.AuthorityId ?? "unknown";
         var audit = _evidenceService.BuildAuditRecord(
             intent, authorityId, evidenceManifest, policyDecision, paymentResult, DateTimeOffset.UtcNow);
         _auditLedger.Append(audit);
@@ -124,7 +126,7 @@ public sealed class TrustFramework
 
         var finalDecision = approve ? Decision.Approve : Decision.Deny;
         var paymentResult = approve
-            ? _paymentAdapter.Submit(intent)
+            ? _paymentExecution.Submit(intent)
             : new PaymentResult(transactionId, PaymentStatus.NotAttempted, string.Empty, null);
         _paymentOutcomeStore.Save(paymentResult);
         if (approve)

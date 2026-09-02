@@ -12,7 +12,9 @@ public sealed record MandateCheckResult(
     IReadOnlyList<string> Reasons,
     bool ContextMatches,
     bool WithinPerTransactionLimit,
-    bool WithinWeeklyLimit);
+    bool WithinWeeklyLimit,
+    bool WithinDailyLimit = true,
+    bool WithinMonthlyLimit = true);
 
 /// <summary>
 /// Checks what the frozen trust layer's DelegatedAuthority structurally cannot: does this
@@ -35,6 +37,12 @@ public sealed class MandateEvaluationService
         DateTimeOffset now)
     {
         var reasons = new List<string>();
+
+        if (proposedAmount <= 0)
+        {
+            reasons.Add("AMOUNT_MUST_BE_POSITIVE");
+            return new MandateCheckResult(MandateCheckDecision.Block, reasons, false, false, false, false, false);
+        }
 
         if (!mandate.IsActive(now))
         {
@@ -69,11 +77,26 @@ public sealed class MandateEvaluationService
             }
         }
 
-        var decision = DetermineDecision(mandate, contextMatches, withinPerTransactionLimit, withinWeeklyLimit);
-        return new MandateCheckResult(decision, reasons, contextMatches, withinPerTransactionLimit, withinWeeklyLimit);
+        var withinDailyLimit = true;
+        if (mandate.DailyLimit is decimal dailyLimit)
+        {
+            var start = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset);
+            withinDailyLimit = _usageTracker.AmountSpentSince(mandate.MandateId, start) + proposedAmount <= dailyLimit;
+            if (!withinDailyLimit) reasons.Add("ABOVE_DAILY_LIMIT");
+        }
+
+        var withinMonthlyLimit = true;
+        if (mandate.MonthlyLimit is decimal monthlyLimit)
+        {
+            withinMonthlyLimit = _usageTracker.AmountSpentSince(mandate.MandateId, now.AddMonths(-1)) + proposedAmount <= monthlyLimit;
+            if (!withinMonthlyLimit) reasons.Add("ABOVE_MONTHLY_LIMIT");
+        }
+
+        var decision = DetermineDecision(mandate, contextMatches, withinPerTransactionLimit, withinWeeklyLimit, withinDailyLimit, withinMonthlyLimit);
+        return new MandateCheckResult(decision, reasons, contextMatches, withinPerTransactionLimit, withinWeeklyLimit, withinDailyLimit, withinMonthlyLimit);
     }
 
-    private static MandateCheckDecision DetermineDecision(FinancialMandate mandate, bool contextMatches, bool withinPerTransactionLimit, bool withinWeeklyLimit)
+    private static MandateCheckDecision DetermineDecision(FinancialMandate mandate, bool contextMatches, bool withinPerTransactionLimit, bool withinWeeklyLimit, bool withinDailyLimit, bool withinMonthlyLimit)
     {
         // A context mismatch always escalates regardless of amount — a fixed spending limit is
         // not the same claim as "this specific recipient/route/task is the one that was approved."
@@ -82,7 +105,7 @@ public sealed class MandateEvaluationService
             return MandateCheckDecision.Escalate;
         }
 
-        if (!withinWeeklyLimit || !withinPerTransactionLimit)
+        if (!withinWeeklyLimit || !withinDailyLimit || !withinMonthlyLimit || !withinPerTransactionLimit)
         {
             return mandate.AboveLimit == AboveLimitAction.Block ? MandateCheckDecision.Block : MandateCheckDecision.Escalate;
         }

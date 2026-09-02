@@ -29,6 +29,81 @@ The loop has a configurable turn limit, rejects unknown or repeated identical to
 a counter-hypothesis challenge before completion, and fails safely to an inconclusive escalation
 recommendation when it reaches the turn limit.
 
+```text
+Observe transaction
+        ↓
+Form competing hypotheses and open questions
+        ↓
+Select one bounded investigation tool
+        ↓
+Inspect and persist evidence
+        ↓
+Update supporting and contradictory evidence
+        ↓
+Challenge the leading conclusion
+        ↓
+Stop when sufficient, or at the configured safety limit
+        ↓
+Structured advisory recommendation
+        ↓
+──────────────── deterministic trust boundary ────────────────
+        ↓
+Identity / authority / mandate / limits / policy
+        ↓
+APPROVE / DENY / ESCALATE
+```
+
+Each investigation persists its objective, hypotheses, confidence values, open questions,
+tool calls and arguments, raw evidence payloads, reasoning summary, challenge status, lifecycle
+status, and final recommendation. `IInvestigationStateStore` provides the persistence boundary;
+the API uses `EfInvestigationStateStore` when SQL Server or PostgreSQL is configured and the
+in-memory implementation otherwise. Provider-specific `AddInvestigationStates` migrations are
+included for both databases.
+
+Three memory sources are represented explicitly:
+
+- **Structured memory:** transaction, customer, merchant, device and beneficiary history.
+- **Semantic memory:** human reviews, historical cases and retrieved evidence through
+  `IInvestigationMemory`.
+- **Analytical models:** existing behavioural, anomaly, graph and deterministic risk services,
+  exposed as tools today and ready for calibrated learned-model implementations later.
+
+The model cannot invent a new executable capability: every requested tool name is checked against
+the fixed allow-list before dispatch. Repeated calls with identical arguments are rejected. A
+request for a policy, approval or payment function fails because no such function exists in the
+investigator's tool surface.
+
+## Mandate and payment safety hardening
+
+The transaction path now implements the core Part 2 safety invariants:
+
+- Mandates carry immutable version metadata. Saving a newer version retains and marks the prior
+  version `Superseded`, preserving the authority that existed at any historical point.
+- Daily, rolling-weekly, rolling-monthly and per-transaction limits are evaluated. Amounts must
+  be positive.
+- Spend follows `Reserve → Execute → Commit` and releases the reservation when policy or payment
+  fails. The in-memory reference store performs check-and-reserve under one lock so concurrent
+  requests cannot consume the same remaining allowance.
+- Above-limit human approval creates an exact, expiring, single-use `OneOffAuthorisation` bound
+  to the execution, mandate/version, amount, currency, merchant, payment method and canonical task
+  context hash. It is consumed atomically and cannot be replayed.
+- One-off approval is passed to policy as a transaction-scoped authority. Standing agent authority
+  is never temporarily increased or restored.
+- Task status, task/mandate agent, task/mandate principal, mandate status/expiry, currency, and—when
+  a payment-method store is supplied—payment-method ownership and usability are checked together.
+- Payment submission is wrapped in a durable-store-ready state machine and idempotency coordinator.
+  A retry with the same idempotency key returns the original result instead of charging twice;
+  adapter exceptions become `Unknown` attempts for later reconciliation.
+- Scheduled executions use `(taskId, scheduledFor)` as the occurrence identity. The occurrence is
+  atomically claimed so repeated polling or competing scheduler instances cannot execute it twice.
+- `ConnectProviderToken` supports the preferred PSP-hosted-fields flow, allowing the backend to
+  receive only a provider token and display-safe metadata rather than PAN/CVV.
+
+The in-memory reservation, authorisation, payment-attempt and occurrence stores are reference
+implementations and concurrency-safe within one process. Production deployment must back these
+interfaces with database uniqueness/transactions shared by every server, add PSP webhooks/outbox
+reconciliation, and configure authenticated human approval with step-up authentication.
+
 C#/.NET reference implementation of the trust and authorisation layer described in
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit
@@ -81,6 +156,10 @@ src/
                             AgentOutputValidator (schema/evidence/currency validation),
                             AgentFactory (live OpenAI connector or deterministic scripted
                             connector), ScriptedChatCompletionService
+  AgentTrust.Intelligence   Level 1/2 behavioural, anomaly, graph and risk analytics plus the
+                            Level 3 FinancialInvestigationAgent, bounded tool catalogue,
+                            explicit hypothesis/evidence state, stop controls, semantic memory
+                            interfaces and structured advisory recommendations
   AgentTrust.Orchestration  TrustFramework: the shared orchestrator (identity -> ... -> audit,
                             plus the human-approval resolve path) used by both the Runner and
                             the Api so the transaction lifecycle is implemented exactly once
@@ -95,7 +174,8 @@ tests/
                             audit-ledger tamper-detection tests, approval-workflow tests,
                             EF-Core persistence tests (real SQLite database), API integration
                             tests (WebApplicationFactory), and a data-driven theory test running
-                            every scenario in scenarios/ against its ground truth (54 tests total)
+                            every scenario in scenarios/ against its ground truth, plus Level 3
+                            tool-selection, counter-analysis, boundary and state-persistence tests
 scenarios/
   s01..s15                  direct-injection scenarios (S1-S15 from the concept document)
   s16..s19                  agent-mode scenarios: valid proposal, malformed output, fabricated
@@ -111,7 +191,7 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ```bash
 dotnet build
-dotnet test                                  # 54 tests: unit + persistence + API + scenario suite
+dotnet test                                  # 119 tests: unit + persistence + API + scenarios + safety + Level 3
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 
@@ -508,7 +588,7 @@ sees the risk score at all, only the evidence.
   default, since `InvestigationAgent` is the free, reproducible, no-LLM-cost equivalent used by
   every test)
 
-**Tests** (`tests/AgentTrust.Tests/Intelligence/`, 12 tests): behaviour-profile construction and
+**Tests** (`tests/AgentTrust.Tests/Intelligence/`): behaviour-profile construction and
 merchant-deviation detection against the doc's own worked numbers, each detector individually,
 the risk engine end-to-end on both the night-time scenario and an ordinary transaction, and
 `IntelligenceTrustLayerIntegrationTests` — the one that matters most: proves intelligence
@@ -633,15 +713,15 @@ recommendation — "Agent: ESCALATE. Human: Legitimate. Store it."), `ModelEvalu
 recall/F1/accuracy of the AI's ESCALATE calls against recorded real-world outcomes — how you'd
 actually know whether the intelligence layer is getting better or worse over time).
 
-**Tests** (18 new, in `tests/AgentTrust.Tests/Intelligence/`): the fraud-ring graph pattern with
+**Tests** (in `tests/AgentTrust.Tests/Intelligence/`): the fraud-ring graph pattern with
 the doc's exact numbers and a negative control (an ordinary merchant with no collapse), all three
 new risk engines individually and combined, the ambiguous-vs-clear multi-step investigation
 branch, the full merchant-investigation reproduction, long-term-memory-backed behavioural-change
 detection, and model evaluation's precision/recall/F1/accuracy arithmetic checked against a
-hand-computed 5-case confusion matrix. 100/100 tests passing across the whole repo.
+hand-computed 5-case confusion matrix. The current complete suite contains 111 passing tests.
 
-This completes all three of the vision doc's phases (Financial Intelligence, Consumer Financial
-Mandates, Advanced Financial Intelligence) as originally scoped.
+These Level 1 and Level 2 capabilities now act as tools and evaluation baselines for the Level 3
+agentic investigation objective rather than being treated as the final intelligence architecture.
 
 ## Intelligence wired into AgentTrust.Api
 
@@ -728,7 +808,7 @@ existing `PersistenceTests.cs` pattern): recording history then investigating a 
 anomaly over HTTP, the combined transaction+intelligence flow proving the two decisions are
 independent, the feedback/model-evaluation round trip, transaction-event round-trip and
 upsert-by-id, profile-snapshot round-trip and closest-snapshot lookup, and behavioural-change
-detection against a persisted (not in-memory) baseline. **107/107 tests passing across the whole
+detection against a persisted (not in-memory) baseline. **111/111 tests passing across the whole
 repo.**
 
 **Not yet done:** replacing the deterministic `InvestigationAgent`/`InvestigationPlanner` with a
