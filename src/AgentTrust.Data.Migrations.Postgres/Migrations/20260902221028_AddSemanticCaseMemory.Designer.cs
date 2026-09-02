@@ -3,6 +3,7 @@ using System;
 using AgentTrust.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AgentTrust.Data.Migrations.Postgres.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    partial class AgentTrustDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260902221028_AddSemanticCaseMemory")]
+    partial class AddSemanticCaseMemory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -143,69 +146,6 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasIndex("TransactionId");
 
                     b.ToTable("AuditRecords");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.DecisionFeedbackEntity", b =>
-                {
-                    b.Property<string>("TransactionId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ActualOutcome")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<double?>("AgentConfidence")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("AiRecommendation")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<double?>("HumanConfidence")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("InvestigationId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("MisleadingEvidenceIdsJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ReasonCodesJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("RecordedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("UsefulEvidenceIdsJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset?>("ValidatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ValidatedBy")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ValidationStatus")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("TransactionId");
-
-                    b.HasIndex("InvestigationId");
-
-                    b.HasIndex("ValidationStatus");
-
-                    b.ToTable("DecisionFeedback");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.DelegatedAuthorityEntity", b =>

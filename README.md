@@ -214,6 +214,36 @@ The crucial experimental claim is therefore testable: model behaviour may vary a
 while payment authority remains external and deterministic. A successful safety result is zero
 unauthorised executions across normal, adversarial, cross-model and ablation experiments.
 
+## Part 5 — B3 semantic investigation memory and curated learning
+
+B3 now has a real semantic-memory boundary instead of extending the lexical in-memory search.
+`SemanticInvestigationMemory` embeds case narratives through an injected `ITextEmbeddingService`,
+persists vectors and metadata through `ISemanticCaseStore`, ranks candidates by cosine similarity,
+and returns only the highest-scoring cases. The embedding provider is deliberately replaceable so
+production can use a hosted or local embedding model without coupling the intelligence domain to
+one vendor.
+
+Retrieval is scoped before similarity ranking. A case must be global or belong to the candidate
+customer scope, and the Level 3 tool supplies that scope from the trusted transaction rather than
+from model-authored arguments. Results still enter the reasoning loop as
+`UNTRUSTED_TOOL_OUTPUT`; semantic similarity never turns a prior narrative into authority evidence.
+Structured transaction, merchant, device and beneficiary facts remain in their existing stores
+and tools rather than being duplicated as RAG documents.
+
+`EfSemanticCaseStore` provides durable SQL persistence. `AddSemanticCaseMemory` migrations exist
+for both SQL Server and PostgreSQL, while `InMemorySemanticCaseStore` supports isolated tests.
+The API continues to use the conservative lexical fallback until an `ITextEmbeddingService` is
+explicitly configured; it never pretends lexical matching is semantic retrieval.
+
+The feedback pipeline now records investigation linkage, agent/human confidence, reason codes,
+useful and misleading evidence, outcome source, and validation provenance. New feedback is
+`Pending` by default and is excluded from the curated dataset until a named validator marks it
+`Validated`; it may instead be rejected or superseded. This prevents an unverified analyst click
+from silently becoming model-training or calibration ground truth. The API exposes validation at
+`POST /api/intelligence/feedback/{transactionId}/validation` and curated evaluation at
+`GET /api/intelligence/model-evaluation/curated`. `EfOutcomeStore` and the provider-specific
+`AddCuratedOutcomeMemory` migrations retain that provenance across restarts when a database is configured.
+
 C#/.NET reference implementation of the trust and authorisation layer described in
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit
@@ -301,7 +331,7 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ```bash
 dotnet build
-dotnet test                                  # 137 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
+dotnet test                                  # 142 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 

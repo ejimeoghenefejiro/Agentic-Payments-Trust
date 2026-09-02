@@ -1,6 +1,8 @@
 using System.Text.Json;
 using AgentTrust.Intelligence.Behaviour;
 using AgentTrust.Intelligence.Investigation;
+using AgentTrust.Intelligence.Learning;
+using AgentTrust.Intelligence.Risk;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentTrust.Data;
@@ -123,4 +125,105 @@ public sealed class EfProfileHistoryStore : IProfileHistoryStore
         GetHistory(entityId)
             .OrderBy(s => Math.Abs((s.TakenAt - asOf).Ticks))
             .FirstOrDefault()?.Profile;
+}
+
+public sealed class EfSemanticCaseStore : ISemanticCaseStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new();
+    private readonly AgentTrustDbContext _db;
+
+    public EfSemanticCaseStore(AgentTrustDbContext db) => _db = db;
+
+    public void Upsert(SemanticCaseRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var existing = _db.SemanticCases.Find(record.Case.CaseId);
+        var entity = new SemanticCaseEntity
+        {
+            CaseId = record.Case.CaseId,
+            ScopeId = record.Case.ScopeId,
+            Title = record.Case.Title,
+            Narrative = record.Case.Narrative,
+            Outcome = record.Case.Outcome,
+            TagsJson = JsonSerializer.Serialize(record.Case.Tags, JsonOptions),
+            EmbeddingJson = JsonSerializer.Serialize(record.Embedding, JsonOptions),
+            ResolvedAt = record.Case.ResolvedAt,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        if (existing is null) _db.SemanticCases.Add(entity);
+        else _db.Entry(existing).CurrentValues.SetValues(entity);
+        _db.SaveChanges();
+    }
+
+    public IReadOnlyList<SemanticCaseRecord> GetByScope(string scopeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scopeId);
+        return _db.SemanticCases.AsNoTracking()
+            .Where(e => e.ScopeId == scopeId || e.ScopeId == "global")
+            .ToList()
+            .Select(e => new SemanticCaseRecord(
+                new HistoricalCaseMemory(e.CaseId, e.Title, e.Narrative, e.Outcome,
+                    JsonSerializer.Deserialize<List<string>>(e.TagsJson, JsonOptions) ?? [], e.ScopeId, e.ResolvedAt),
+                JsonSerializer.Deserialize<List<float>>(e.EmbeddingJson, JsonOptions) ?? []))
+            .ToList();
+    }
+}
+
+public sealed class EfOutcomeStore : IOutcomeStore
+{
+    private static readonly JsonSerializerOptions JsonOptions = new();
+    private readonly AgentTrustDbContext _db;
+    public EfOutcomeStore(AgentTrustDbContext db) => _db = db;
+
+    public void Record(DecisionFeedback feedback)
+    {
+        ArgumentNullException.ThrowIfNull(feedback);
+        feedback.Validate();
+        if (_db.DecisionFeedback.Any(e => e.TransactionId == feedback.TransactionId))
+            throw new InvalidOperationException($"Feedback already exists for transaction '{feedback.TransactionId}'.");
+        _db.DecisionFeedback.Add(ToEntity(feedback));
+        _db.SaveChanges();
+    }
+
+    public void SetValidation(string transactionId, OutcomeValidationStatus status, string validatorId, DateTimeOffset validatedAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(transactionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(validatorId);
+        if (status == OutcomeValidationStatus.Pending) throw new ArgumentException("A validation decision cannot restore Pending status.", nameof(status));
+        var entity = _db.DecisionFeedback.Find(transactionId)
+            ?? throw new KeyNotFoundException($"No feedback exists for transaction '{transactionId}'.");
+        var updated = ToDomain(entity) with { ValidationStatus = status, ValidatedBy = validatorId, ValidatedAt = validatedAt };
+        updated.Validate();
+        entity.ValidationStatus = status.ToString();
+        entity.ValidatedBy = validatorId;
+        entity.ValidatedAt = validatedAt;
+        _db.SaveChanges();
+    }
+
+    public IReadOnlyList<DecisionFeedback> GetAll() =>
+        _db.DecisionFeedback.AsNoTracking().ToList().OrderBy(e => e.RecordedAt).Select(ToDomain).ToList();
+
+    public IReadOnlyList<DecisionFeedback> GetCurated() =>
+        _db.DecisionFeedback.AsNoTracking().Where(e => e.ValidationStatus == nameof(OutcomeValidationStatus.Validated))
+            .ToList().OrderBy(e => e.RecordedAt).Select(ToDomain).ToList();
+
+    private static DecisionFeedbackEntity ToEntity(DecisionFeedback f) => new()
+    {
+        TransactionId = f.TransactionId, InvestigationId = f.InvestigationId,
+        AiRecommendation = f.AiRecommendation.ToString(), AgentConfidence = f.AgentConfidence,
+        ActualOutcome = f.ActualOutcome.ToString(), HumanConfidence = f.HumanConfidence, Notes = f.Notes,
+        ReasonCodesJson = JsonSerializer.Serialize(f.ReasonCodes ?? [], JsonOptions),
+        UsefulEvidenceIdsJson = JsonSerializer.Serialize(f.UsefulEvidenceIds ?? [], JsonOptions),
+        MisleadingEvidenceIdsJson = JsonSerializer.Serialize(f.MisleadingEvidenceIds ?? [], JsonOptions),
+        Source = f.Source.ToString(), ValidationStatus = f.ValidationStatus.ToString(),
+        ValidatedBy = f.ValidatedBy, ValidatedAt = f.ValidatedAt, RecordedAt = f.RecordedAt
+    };
+
+    private static DecisionFeedback ToDomain(DecisionFeedbackEntity e) => new(
+        e.TransactionId, Enum.Parse<IntelligenceRecommendation>(e.AiRecommendation), Enum.Parse<ActualOutcome>(e.ActualOutcome),
+        e.Notes, e.RecordedAt, e.InvestigationId, e.AgentConfidence, e.HumanConfidence,
+        JsonSerializer.Deserialize<List<string>>(e.ReasonCodesJson, JsonOptions) ?? [],
+        JsonSerializer.Deserialize<List<string>>(e.UsefulEvidenceIdsJson, JsonOptions) ?? [],
+        JsonSerializer.Deserialize<List<string>>(e.MisleadingEvidenceIdsJson, JsonOptions) ?? [],
+        Enum.Parse<OutcomeSource>(e.Source), Enum.Parse<OutcomeValidationStatus>(e.ValidationStatus), e.ValidatedBy, e.ValidatedAt);
 }

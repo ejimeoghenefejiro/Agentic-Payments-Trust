@@ -18,4 +18,17 @@ public sealed record MerchantInvestigateRequest(
     int RecentObservationDays,
     string? SettlementAccountId);
 
-public sealed record FeedbackRequestDto(string TransactionId, string AiRecommendation, string ActualOutcome, string? Notes);
+public sealed record FeedbackRequestDto(
+    string TransactionId,
+    string AiRecommendation,
+    string ActualOutcome,
+    string? Notes,
+    string? InvestigationId = null,
+    double? AgentConfidence = null,
+    double? HumanConfidence = null,
+    IReadOnlyList<string>? ReasonCodes = null,
+    IReadOnlyList<string>? UsefulEvidenceIds = null,
+    IReadOnlyList<string>? MisleadingEvidenceIds = null,
+    string OutcomeSource = "HumanReview");
+
+public sealed record ValidateFeedbackRequestDto(string Status, string ValidatorId);

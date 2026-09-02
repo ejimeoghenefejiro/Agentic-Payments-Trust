@@ -39,3 +39,35 @@ public sealed class InvestigationStateEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
+
+public sealed class SemanticCaseEntity
+{
+    public string CaseId { get; set; } = "";
+    public string ScopeId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Narrative { get; set; } = "";
+    public string Outcome { get; set; } = "";
+    public string TagsJson { get; set; } = "[]";
+    public string EmbeddingJson { get; set; } = "[]";
+    public DateTimeOffset? ResolvedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class DecisionFeedbackEntity
+{
+    public string TransactionId { get; set; } = "";
+    public string? InvestigationId { get; set; }
+    public string AiRecommendation { get; set; } = "";
+    public double? AgentConfidence { get; set; }
+    public string ActualOutcome { get; set; } = "";
+    public double? HumanConfidence { get; set; }
+    public string? Notes { get; set; }
+    public string ReasonCodesJson { get; set; } = "[]";
+    public string UsefulEvidenceIdsJson { get; set; } = "[]";
+    public string MisleadingEvidenceIdsJson { get; set; } = "[]";
+    public string Source { get; set; } = "";
+    public string ValidationStatus { get; set; } = "";
+    public string? ValidatedBy { get; set; }
+    public DateTimeOffset? ValidatedAt { get; set; }
+    public DateTimeOffset RecordedAt { get; set; }
+}

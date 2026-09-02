@@ -64,6 +64,7 @@ if (!string.IsNullOrWhiteSpace(sqlServerConnectionString) || !string.IsNullOrWhi
     builder.Services.AddScoped<ITransactionEventStore, EfTransactionEventStore>();
     builder.Services.AddScoped<IProfileHistoryStore, EfProfileHistoryStore>();
     builder.Services.AddScoped<IInvestigationStateStore, EfInvestigationStateStore>();
+    builder.Services.AddScoped<IOutcomeStore, EfOutcomeStore>();
 }
 else
 {
@@ -84,6 +85,7 @@ else
     builder.Services.AddSingleton<ITransactionEventStore, InMemoryTransactionEventStore>();
     builder.Services.AddSingleton<IProfileHistoryStore, InMemoryProfileHistoryStore>();
     builder.Services.AddSingleton<IInvestigationStateStore, InMemoryInvestigationStateStore>();
+    builder.Services.AddSingleton<IOutcomeStore, InMemoryOutcomeStore>();
 }
 
 builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
@@ -91,8 +93,7 @@ builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext
-// when a database is configured; singleton in-memory otherwise). IOutcomeStore (feedback) stays
-// singleton in-memory in both cases — not part of this persistence pass.
+// when a database is configured; singleton in-memory otherwise). Feedback follows the same rule.
 //
 // InvestigationAgent/InvestigationPlanner depend on ITransactionEventStore, so they must be
 // Scoped too whenever that store is Scoped (EF-backed) — a Singleton may never capture a Scoped
@@ -101,7 +102,6 @@ builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>
 // for the app's lifetime, which costs nothing here since these are practically stateless).
 // TransactionRiskEngine/DeviceRiskEngine/MerchantRiskEngine take all their input as method
 // parameters rather than injected stores, so they can stay Singleton.
-builder.Services.AddSingleton<IOutcomeStore, InMemoryOutcomeStore>();
 builder.Services.AddSingleton<IInvestigationMemory, InMemoryInvestigationMemory>();
 builder.Services.AddSingleton<TransactionRiskEngine>(_ => new TransactionRiskEngine(
     new IAnomalyDetector[] { new TransactionAnomalyDetector(), new AmountAnomalyDetector(), new VelocityDetector() },

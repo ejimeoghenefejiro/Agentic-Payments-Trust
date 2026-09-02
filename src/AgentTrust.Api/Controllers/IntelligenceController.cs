@@ -199,11 +199,44 @@ public sealed class IntelligenceController : ControllerBase
             return BadRequest(new { error = "AiRecommendation must be Approve/Escalate; ActualOutcome must be Legitimate/Suspicious." });
         }
 
-        var feedback = new DecisionFeedback(dto.TransactionId, recommendation, outcome, dto.Notes, DateTimeOffset.UtcNow);
-        _outcomeStore.Record(feedback);
-        return CreatedAtAction(nameof(GetModelEvaluation), null, feedback);
+        if (!Enum.TryParse<OutcomeSource>(dto.OutcomeSource, ignoreCase: true, out var source))
+            return BadRequest(new { error = "OutcomeSource is invalid." });
+        try
+        {
+            var feedback = new DecisionFeedback(dto.TransactionId, recommendation, outcome, dto.Notes, DateTimeOffset.UtcNow,
+                dto.InvestigationId, dto.AgentConfidence, dto.HumanConfidence, dto.ReasonCodes,
+                dto.UsefulEvidenceIds, dto.MisleadingEvidenceIds, source);
+            _outcomeStore.Record(feedback);
+            return CreatedAtAction(nameof(GetModelEvaluation), null, feedback);
+        }
+        catch (ArgumentException error)
+        {
+            return BadRequest(new { error = error.Message });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Conflict(new { error = error.Message });
+        }
+    }
+
+    [HttpPost("feedback/{transactionId}/validation")]
+    public IActionResult ValidateFeedback(string transactionId, [FromBody] ValidateFeedbackRequestDto dto)
+    {
+        if (!Enum.TryParse<OutcomeValidationStatus>(dto.Status, ignoreCase: true, out var status) ||
+            status == OutcomeValidationStatus.Pending)
+            return BadRequest(new { error = "Status must be Validated, Rejected, or Superseded." });
+        try
+        {
+            _outcomeStore.SetValidation(transactionId, status, dto.ValidatorId, DateTimeOffset.UtcNow);
+            return NoContent();
+        }
+        catch (ArgumentException error) { return BadRequest(new { error = error.Message }); }
+        catch (KeyNotFoundException error) { return NotFound(new { error = error.Message }); }
     }
 
     [HttpGet("model-evaluation")]
     public IActionResult GetModelEvaluation() => Ok(ModelEvaluation.Evaluate(_outcomeStore.GetAll()));
+
+    [HttpGet("model-evaluation/curated")]
+    public IActionResult GetCuratedModelEvaluation() => Ok(ModelEvaluation.EvaluateCurated(_outcomeStore));
 }

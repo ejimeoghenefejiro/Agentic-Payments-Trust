@@ -20,6 +20,8 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<TransactionEventEntity> TransactionEvents => Set<TransactionEventEntity>();
     public DbSet<ProfileSnapshotEntity> ProfileSnapshots => Set<ProfileSnapshotEntity>();
     public DbSet<InvestigationStateEntity> InvestigationStates => Set<InvestigationStateEntity>();
+    public DbSet<SemanticCaseEntity> SemanticCases => Set<SemanticCaseEntity>();
+    public DbSet<DecisionFeedbackEntity> DecisionFeedback => Set<DecisionFeedbackEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -81,6 +83,20 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasKey(e => e.InvestigationId);
             b.HasIndex(e => e.TransactionId);
             b.HasIndex(e => e.Status);
+        });
+
+        modelBuilder.Entity<SemanticCaseEntity>(b =>
+        {
+            b.HasKey(e => e.CaseId);
+            b.HasIndex(e => e.ScopeId);
+            b.HasIndex(e => e.UpdatedAt);
+        });
+
+        modelBuilder.Entity<DecisionFeedbackEntity>(b =>
+        {
+            b.HasKey(e => e.TransactionId);
+            b.HasIndex(e => e.InvestigationId);
+            b.HasIndex(e => e.ValidationStatus);
         });
     }
 }

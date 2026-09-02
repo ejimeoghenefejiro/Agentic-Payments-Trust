@@ -43,7 +43,7 @@ public sealed class InvestigationTools
             "AnalyseFinancialGraph" => AnalyseFinancialGraph(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
             "ComparePeerGroup" => ComparePeerGroup(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
             "GetPreviousHumanReviews" => GetPreviousHumanReviews(ScopedArg(arguments, "customerId", candidate.CustomerId)),
-            "SearchHistoricalCases" => SearchHistoricalCases(Arg(arguments, "query", candidate.MerchantId)),
+            "SearchHistoricalCases" => SearchHistoricalCases(Arg(arguments, "query", candidate.MerchantId), candidate.CustomerId),
             "RetrieveEvidence" => RetrieveScopedEvidence(RequiredArg(arguments, "evidenceId"), candidate),
             "CalculateRiskSignals" => CalculateRiskSignals(JsonSerializer.Serialize(candidate, JsonOptions)),
             _ => throw new InvalidOperationException($"Tool '{tool}' is not on the Level-3 investigation allow-list.")
@@ -111,6 +111,11 @@ public sealed class InvestigationTools
     [KernelFunction("search_historical_cases")]
     [Description("Searches semantic case memory for relevant prior investigations.")]
     public string SearchHistoricalCases(string query) => Json(_memory.SearchHistoricalCases(query));
+
+    private string SearchHistoricalCases(string query, string scopeId) => Json(
+        _memory is IScopedInvestigationMemory scoped
+            ? scoped.SearchHistoricalCases(query, scopeId)
+            : _memory.SearchHistoricalCases(query));
 
     [KernelFunction("retrieve_evidence")]
     [Description("Retrieves trusted evidence by identifier.")]

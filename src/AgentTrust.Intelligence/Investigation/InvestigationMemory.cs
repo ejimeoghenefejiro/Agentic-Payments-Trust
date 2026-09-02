@@ -1,7 +1,14 @@
 namespace AgentTrust.Intelligence.Investigation;
 
 public sealed record HumanReviewMemory(string ReviewId, string TransactionId, string CustomerId, string Outcome, string Notes, DateTimeOffset ReviewedAt);
-public sealed record HistoricalCaseMemory(string CaseId, string Title, string Narrative, string Outcome, IReadOnlyList<string> Tags);
+public sealed record HistoricalCaseMemory(
+    string CaseId,
+    string Title,
+    string Narrative,
+    string Outcome,
+    IReadOnlyList<string> Tags,
+    string ScopeId = "global",
+    DateTimeOffset? ResolvedAt = null);
 public sealed record RetrievedEvidence(string EvidenceId, string SubjectId, string Type, string Summary, string PayloadJson);
 
 public interface IInvestigationMemory
@@ -11,7 +18,14 @@ public interface IInvestigationMemory
     RetrievedEvidence? RetrieveEvidence(string evidenceId);
 }
 
-public sealed class InMemoryInvestigationMemory : IInvestigationMemory
+/// <summary>Privacy-preserving extension used by B3. Retrieval is constrained to the current
+/// customer/tenant scope before similarity ranking; an LLM-supplied query cannot widen it.</summary>
+public interface IScopedInvestigationMemory : IInvestigationMemory
+{
+    IReadOnlyList<HistoricalCaseMemory> SearchHistoricalCases(string query, string scopeId, int maxResults = 5);
+}
+
+public sealed class InMemoryInvestigationMemory : IScopedInvestigationMemory
 {
     private readonly List<HumanReviewMemory> _reviews = new();
     private readonly List<HistoricalCaseMemory> _cases = new();
@@ -31,6 +45,11 @@ public sealed class InMemoryInvestigationMemory : IInvestigationMemory
             || c.Narrative.Contains(t, StringComparison.OrdinalIgnoreCase)
             || c.Tags.Any(tag => tag.Contains(t, StringComparison.OrdinalIgnoreCase)))).ToList();
     }
+
+    public IReadOnlyList<HistoricalCaseMemory> SearchHistoricalCases(string query, string scopeId, int maxResults = 5) =>
+        SearchHistoricalCases(query)
+            .Where(c => c.ScopeId == "global" || c.ScopeId.Equals(scopeId, StringComparison.Ordinal))
+            .Take(Math.Clamp(maxResults, 1, 20)).ToList();
 
     public RetrievedEvidence? RetrieveEvidence(string evidenceId) => _evidence.GetValueOrDefault(evidenceId);
 }

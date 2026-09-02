@@ -145,6 +145,69 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("AuditRecords");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.DecisionFeedbackEntity", b =>
+                {
+                    b.Property<string>("TransactionId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ActualOutcome")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<double?>("AgentConfidence")
+                        .HasColumnType("float");
+
+                    b.Property<string>("AiRecommendation")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<double?>("HumanConfidence")
+                        .HasColumnType("float");
+
+                    b.Property<string>("InvestigationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("MisleadingEvidenceIdsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ReasonCodesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("UsefulEvidenceIdsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ValidatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ValidatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("TransactionId");
+
+                    b.HasIndex("InvestigationId");
+
+                    b.HasIndex("ValidationStatus");
+
+                    b.ToTable("DecisionFeedback");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.DelegatedAuthorityEntity", b =>
                 {
                     b.Property<string>("AuthorityId")
@@ -384,6 +447,50 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("EntityId");
 
                     b.ToTable("ProfileSnapshots");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.SemanticCaseEntity", b =>
+                {
+                    b.Property<string>("CaseId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("EmbeddingJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Narrative")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ScopeId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("CaseId");
+
+                    b.HasIndex("ScopeId");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("SemanticCases");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.TransactionEventEntity", b =>

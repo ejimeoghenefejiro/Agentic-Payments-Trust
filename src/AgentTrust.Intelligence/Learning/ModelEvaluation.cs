@@ -19,6 +19,12 @@ public sealed record ModelEvaluationResult(
 
 public static class ModelEvaluation
 {
+    public static ModelEvaluationResult EvaluateCurated(IOutcomeStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        return Evaluate(store.GetCurated());
+    }
+
     public static ModelEvaluationResult Evaluate(IReadOnlyList<DecisionFeedback> feedback)
     {
         if (feedback.Count == 0)
