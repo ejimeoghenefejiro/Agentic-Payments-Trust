@@ -139,6 +139,79 @@ cross-customer queries, cross-subject evidence retrieval, oversized responses, s
 injection and fabricated approval evidence. All attempts remain above the deterministic trust
 boundary and produce zero payment capabilities.
 
+## Part 4 — research-grade comparative evaluation
+
+The deterministic engine is retained as the mandatory **B0 baseline**. It is not thrown away when
+Level 3 or learned models are added. `ComparativeResearchEvaluator` runs every intelligence
+configuration over the same labelled cases and refuses to start unless B0 is present. This makes
+the implementation an experimental apparatus for answering what agentic reasoning adds, rather
+than merely demonstrating that an AI component exists.
+
+The planned ablation ladder is explicit in `ResearchConfiguration`:
+
+- **B0:** deterministic trust framework only.
+- **B1:** deterministic trust plus Level 1/2 analytical signals.
+- **B2:** bounded Level 3 agentic investigation.
+- **B3:** Level 3 plus semantic case memory.
+- **B4:** Level 3 plus calibrated learned risk signals.
+
+Each run records a study ID, dataset/version, fixed seed, policy version, UTC start time and
+optional model/version. Per-case trials retain the expected and recommended decisions, unsafe
+probability, reference and retrieved evidence, tools selected, hypothesis/counter-evidence
+coverage, stop-criterion result, payment-execution observation and wall latency. The report adds
+decision accuracy with a 95% Wilson interval, unsafe precision/recall/F1, Brier score, expected
+calibration error, evidence precision/recall/F1, counter-evidence and stopping rates, tool use,
+latency percentiles, unauthorised executions, and paired exact McNemar comparisons against B0.
+`ExperimentReportWriter.WriteComparative` exports the complete protocol, trials, metrics and
+paired comparisons as indented JSON plus a per-case CSV suitable for R, Python or archival.
+
+This separates the thesis layers clearly:
+
+- **Research contribution:** bounded evidence-traceable investigation, deterministic financial
+  authority, adversarial boundary methodology, and reproducible comparative evaluation.
+- **Research artefact:** the C# policy engine, mandates, risk/graph tools, investigator, scenario
+  generator and audit implementation used to instantiate and test those claims.
+- **Supporting engineering:** APIs, EF Core, migrations, tokenisation, scheduling, idempotency,
+  payment state and deployment infrastructure that make the experiments credible and repeatable.
+
+The long-term architecture is:
+
+```text
+                         FINANCIAL AGENT
+                               │
+                               ▼
+                    REASONING / INVESTIGATION
+                               │
+          ┌────────────────────┼────────────────────┐
+          ▼                    ▼                    ▼
+   Behaviour Model      Graph Intelligence      ML Risk Models
+          │                    │                    │
+          ├────────────────────┼────────────────────┤
+          ▼                    ▼                    ▼
+   History Tool          Device Tool          Merchant Tool
+   Beneficiary Tool      Graph Tool           Evidence Tool
+          └────────────────────┼────────────────────┘
+                               ▼
+                    Evidence-backed hypothesis
+                               ▼
+                     Agent recommendation
+                               ▼
+              ───────── INTELLIGENCE BOUNDARY ─────────
+                               ▼
+                    DETERMINISTIC TRUST LAYER
+                               │
+                 Identity / Authority / Mandate
+                 Limits / Revocation / Policy
+                               ▼
+                    APPROVE / DENY / ESCALATE
+                               ▼
+                            PAYMENT
+```
+
+The crucial experimental claim is therefore testable: model behaviour may vary across B2–B4,
+while payment authority remains external and deterministic. A successful safety result is zero
+unauthorised executions across normal, adversarial, cross-model and ablation experiments.
+
 C#/.NET reference implementation of the trust and authorisation layer described in
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit
@@ -226,7 +299,7 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ```bash
 dotnet build
-dotnet test                                  # 133 tests: unit + persistence + API + scenarios + adversarial boundary tests
+dotnet test                                  # 137 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 

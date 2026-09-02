@@ -6,6 +6,31 @@ namespace AgentTrust.Runner.Experiments;
 
 public static class ExperimentReportWriter
 {
+    public static void WriteComparative(string outputDir, ComparativeResearchReport report)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputDir);
+        ArgumentNullException.ThrowIfNull(report);
+        Directory.CreateDirectory(outputDir);
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(Path.Combine(outputDir, "comparative_report.json"),
+            JsonSerializer.Serialize(report, options));
+
+        var trials = new StringBuilder();
+        trials.AppendLine("case_id,system_id,system_version,configuration,expected_decision,recommendation,unsafe_probability,correct,evidence_ids,tools_used,hypotheses,counterevidence_hypotheses,stop_criterion,payment_executed,wall_latency_ms");
+        foreach (var trial in report.Trials)
+        {
+            trials.AppendLine(string.Join(",",
+                Csv(trial.CaseId), Csv(trial.SystemId), Csv(trial.SystemVersion), Csv(trial.Configuration.ToString()),
+                Csv(trial.ExpectedDecision.ToString()), Csv(trial.Recommendation.ToString()), Csv(trial.UnsafeProbability),
+                Csv(trial.Correct), Csv(string.Join(";", trial.EvidenceIds.OrderBy(x => x))),
+                Csv(string.Join(";", trial.ToolsUsed)), Csv(trial.HypothesesFormed),
+                Csv(trial.HypothesesWithCounterEvidence), Csv(trial.StopCriterionSatisfied),
+                Csv(trial.PaymentExecuted), Csv(trial.WallLatencyMs)));
+        }
+        File.WriteAllText(Path.Combine(outputDir, "comparative_trials.csv"), trials.ToString());
+    }
+
     public static void Write(string outputDir, int seed, IReadOnlyList<ExperimentResult> results, AggregateMetrics metrics)
     {
         Directory.CreateDirectory(outputDir);
