@@ -32,13 +32,17 @@ public sealed class FinancialInvestigationAgent
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter() }
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        MaxDepth = 32,
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
     };
 
     public FinancialInvestigationAgent(Kernel kernel, InvestigationTools tools, IInvestigationStateStore states, int maxTurns = 12)
     {
         if (maxTurns < 3) throw new ArgumentOutOfRangeException(nameof(maxTurns), "At least three turns are required for investigation and challenge.");
         _kernel = kernel;
+        if (_kernel.Plugins.Count > 0)
+            throw new InvalidOperationException("The Level-3 reasoning kernel must not contain plugins. Tools are dispatched only through the bounded C# allow-list.");
         _tools = tools;
         _states = states;
         _maxTurns = maxTurns;
@@ -46,6 +50,7 @@ public sealed class FinancialInvestigationAgent
 
     public async Task<InvestigationRunResult> InvestigateAsync(TransactionEvent candidate, CancellationToken cancellationToken = default)
     {
+        InvestigationSecurityPolicy.ValidateCandidate(candidate);
         var now = DateTimeOffset.UtcNow;
         var state = new InvestigationState
         {
@@ -81,8 +86,8 @@ public sealed class FinancialInvestigationAgent
                         continue;
                     }
                     if (turn.Recommendation is null) throw new InvalidOperationException("A completed investigation must include a structured recommendation.");
-                    Complete(state, turn.Recommendation);
-                    return new InvestigationRunResult(state, turn.Recommendation);
+                    var recommendation = Complete(state, turn.Recommendation);
+                    return new InvestigationRunResult(state, recommendation);
                 }
 
                 if (!turn.Action.Equals("use_tool", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(turn.Tool))
@@ -91,6 +96,7 @@ public sealed class FinancialInvestigationAgent
                     throw new InvalidOperationException($"Reasoner requested forbidden tool '{turn.Tool}'.");
 
                 var arguments = (IReadOnlyDictionary<string, string>?)turn.Arguments ?? new Dictionary<string, string>();
+                InvestigationSecurityPolicy.ValidateArguments(arguments);
                 if (state.ToolsUsed.Any(t => t.Tool.Equals(turn.Tool, StringComparison.OrdinalIgnoreCase)
                     && ArgumentsEqual(t.Arguments, arguments)))
                 {
@@ -139,32 +145,60 @@ public sealed class FinancialInvestigationAgent
 
     private static void ApplyReasoningState(InvestigationState state, ReasoningTurn turn)
     {
+        if (turn.Rationale.Length > InvestigationSecurityPolicy.MaxRationaleCharacters)
+            throw new InvalidOperationException("Reasoning rationale exceeds the permitted length.");
         if (turn.Hypotheses is not null)
         {
+            if (turn.Hypotheses.Count > InvestigationSecurityPolicy.MaxHypotheses)
+                throw new InvalidOperationException("Reasoner returned too many hypotheses.");
             foreach (var hypothesis in turn.Hypotheses)
+            {
                 if (hypothesis.Confidence is < 0 or > 1) throw new InvalidOperationException("Hypothesis confidence must be between 0 and 1.");
+                if (hypothesis.Id.Length > 64 || hypothesis.Description.Length > 1_000
+                    || hypothesis.SupportingEvidence.Count > InvestigationSecurityPolicy.MaxEvidenceItemsPerHypothesis
+                    || hypothesis.ContradictingEvidence.Count > InvestigationSecurityPolicy.MaxEvidenceItemsPerHypothesis)
+                    throw new InvalidOperationException("Hypothesis violates the investigation security policy.");
+            }
             state.Hypotheses = turn.Hypotheses;
         }
-        if (turn.OpenQuestions is not null) state.OpenQuestions = turn.OpenQuestions.Distinct().ToList();
+        if (turn.OpenQuestions is not null)
+        {
+            if (turn.OpenQuestions.Count > InvestigationSecurityPolicy.MaxOpenQuestions || turn.OpenQuestions.Any(q => q.Length > 1_000))
+                throw new InvalidOperationException("Open questions violate the investigation security policy.");
+            state.OpenQuestions = turn.OpenQuestions.Distinct().ToList();
+        }
     }
 
     private static ReasoningTurn ParseTurn(string? content)
     {
         if (string.IsNullOrWhiteSpace(content)) throw new InvalidOperationException("Reasoner returned an empty response.");
+        if (content.Length > InvestigationSecurityPolicy.MaxModelResponseCharacters)
+            throw new InvalidOperationException("Reasoner response exceeds the maximum permitted size.");
         var start = content.IndexOf('{');
         var end = content.LastIndexOf('}');
         if (start < 0 || end < start) throw new InvalidOperationException("Reasoner did not return a JSON object.");
-        return JsonSerializer.Deserialize<ReasoningTurn>(content[start..(end + 1)], JsonOptions)
+        var turn = JsonSerializer.Deserialize<ReasoningTurn>(content[start..(end + 1)], JsonOptions)
             ?? throw new InvalidOperationException("Reasoner response could not be parsed.");
+        if (string.IsNullOrWhiteSpace(turn.Action) || string.IsNullOrWhiteSpace(turn.Rationale))
+            throw new InvalidOperationException("Reasoner response is missing required fields.");
+        return turn;
     }
 
     private static bool ArgumentsEqual(IReadOnlyDictionary<string, string> left, IReadOnlyDictionary<string, string> right) =>
         left.Count == right.Count && left.All(kv => right.TryGetValue(kv.Key, out var value) && value == kv.Value);
     private static string SummarizePayload(string payload) => payload.Length <= 500 ? payload : payload[..500] + "…";
     private void Save(InvestigationState state) { state.UpdatedAt = DateTimeOffset.UtcNow; _states.Save(state); }
-    private void Complete(InvestigationState state, StructuredInvestigationRecommendation recommendation)
+    private StructuredInvestigationRecommendation Complete(InvestigationState state, StructuredInvestigationRecommendation recommendation)
     {
+        if (recommendation.Confidence is < 0 or > 1 || string.IsNullOrWhiteSpace(recommendation.Rationale)
+            || recommendation.Rationale.Length > InvestigationSecurityPolicy.MaxRationaleCharacters
+            || recommendation.Counterfactual.Length > InvestigationSecurityPolicy.MaxRationaleCharacters
+            || recommendation.ContradictoryEvidence.Count > InvestigationSecurityPolicy.MaxEvidenceItemsPerHypothesis)
+            throw new InvalidOperationException("Recommendation violates the investigation security policy.");
+        // Evidence identity comes from the trusted dispatcher/state, never from model-authored IDs.
+        recommendation = recommendation with { KeyEvidence = state.EvidenceCollected.Select(e => e.EvidenceId).ToList() };
         state.Status = InvestigationStatus.Completed; state.Recommendation = recommendation; Save(state);
+        return recommendation;
     }
 
     private const string SystemPrompt = """

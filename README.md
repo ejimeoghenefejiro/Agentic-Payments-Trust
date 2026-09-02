@@ -104,6 +104,41 @@ implementations and concurrency-safe within one process. Production deployment m
 interfaces with database uniqueness/transactions shared by every server, add PSP webhooks/outbox
 reconciliation, and configure authenticated human approval with step-up authentication.
 
+## Part 3 — hardened LLM trust boundary
+
+The Level 3 investigator is treated as an untrusted, potentially hostile component. Its safety
+does not depend on the system prompt or on the model choosing to behave:
+
+- `AgentTrust.Intelligence` has no project or runtime assembly dependency on payments, payment
+  methods, policy, mandates, orchestration, tasks or scheduling. Executable architecture tests
+  inspect both the compiled references and the `.csproj`, failing if this changes later.
+- The Semantic Kernel supplied to `FinancialInvestigationAgent` must contain zero registered
+  plugins. Any plugin—including a payment-like plugin—causes construction to fail. Analytical
+  tools are invoked exclusively by the bounded C# dispatcher.
+- Direct and indirect capabilities such as payment submission, approval, authority mutation,
+  policy disabling and generic HTTP execution are absent from the allow-list and rejected.
+- Tool identifiers are transaction-scoped. The model cannot substitute another customer,
+  merchant, device or beneficiary identifier to retrieve unrelated data.
+- Retrieved evidence must belong to the candidate transaction/customer/merchant/device/
+  beneficiary scope. Cross-subject evidence is rejected.
+- Every tool result is wrapped as `UNTRUSTED_TOOL_OUTPUT`, including historical cases and analyst
+  notes that may contain stored prompt injection.
+- Candidate identifiers, currencies, amounts, tool arguments, model-response size/depth,
+  hypotheses, questions, confidence and recommendation payloads are bounded and schema-validated.
+  Unknown JSON members and integer enum values are rejected.
+- Model-authored evidence IDs are not authoritative. Final recommendation evidence references are
+  replaced with IDs issued by the trusted dispatcher for evidence actually collected in that
+  investigation.
+- Intelligence output is returned separately by the transaction API and is no longer promoted
+  into the deterministic policy `EvidenceManifest`. A model or analytical component therefore
+  cannot manufacture evidence that satisfies an authority requirement.
+
+The hostile-model suite assumes deliberate compromise rather than prompt compliance. It attempts
+payment, approval, limit increases, authority grants, policy disabling, arbitrary HTTP calls,
+cross-customer queries, cross-subject evidence retrieval, oversized responses, stored prompt
+injection and fabricated approval evidence. All attempts remain above the deterministic trust
+boundary and produce zero payment capabilities.
+
 C#/.NET reference implementation of the trust and authorisation layer described in
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit
@@ -191,7 +226,7 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ```bash
 dotnet build
-dotnet test                                  # 119 tests: unit + persistence + API + scenarios + safety + Level 3
+dotnet test                                  # 133 tests: unit + persistence + API + scenarios + adversarial boundary tests
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 

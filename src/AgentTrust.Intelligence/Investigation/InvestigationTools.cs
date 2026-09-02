@@ -29,22 +29,27 @@ public sealed class InvestigationTools
         _memory = memory ?? new InMemoryInvestigationMemory();
     }
 
-    public string Execute(string tool, IReadOnlyDictionary<string, string> arguments, TransactionEvent candidate) => tool switch
+    public string Execute(string tool, IReadOnlyDictionary<string, string> arguments, TransactionEvent candidate)
     {
-        "GetCustomerHistory" => GetCustomerHistory(Arg(arguments, "customerId", candidate.CustomerId)),
-        "GetMerchantHistory" => GetMerchantHistory(Arg(arguments, "merchantId", candidate.MerchantId)),
-        "GetDeviceHistory" => GetDeviceHistory(Arg(arguments, "deviceId", candidate.DeviceId)),
-        "GetBeneficiaryHistory" => GetBeneficiaryHistory(Arg(arguments, "beneficiaryId", candidate.BeneficiaryId ?? "")),
-        "CalculateBehaviourProfile" => CalculateBehaviourProfile(Arg(arguments, "customerId", candidate.CustomerId)),
-        "DetectAnomalies" => DetectAnomalies(JsonSerializer.Serialize(candidate, JsonOptions)),
-        "AnalyseFinancialGraph" => AnalyseFinancialGraph(Arg(arguments, "merchantId", candidate.MerchantId)),
-        "ComparePeerGroup" => ComparePeerGroup(Arg(arguments, "merchantId", candidate.MerchantId)),
-        "GetPreviousHumanReviews" => GetPreviousHumanReviews(Arg(arguments, "customerId", candidate.CustomerId)),
-        "SearchHistoricalCases" => SearchHistoricalCases(Arg(arguments, "query", candidate.MerchantId)),
-        "RetrieveEvidence" => RetrieveEvidence(RequiredArg(arguments, "evidenceId")),
-        "CalculateRiskSignals" => CalculateRiskSignals(JsonSerializer.Serialize(candidate, JsonOptions)),
-        _ => throw new InvalidOperationException($"Tool '{tool}' is not on the Level-3 investigation allow-list.")
-    };
+        InvestigationSecurityPolicy.ValidateArguments(arguments);
+        var raw = tool switch
+        {
+            "GetCustomerHistory" => GetCustomerHistory(ScopedArg(arguments, "customerId", candidate.CustomerId)),
+            "GetMerchantHistory" => GetMerchantHistory(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
+            "GetDeviceHistory" => GetDeviceHistory(ScopedArg(arguments, "deviceId", candidate.DeviceId)),
+            "GetBeneficiaryHistory" => GetBeneficiaryHistory(ScopedArg(arguments, "beneficiaryId", candidate.BeneficiaryId ?? "")),
+            "CalculateBehaviourProfile" => CalculateBehaviourProfile(ScopedArg(arguments, "customerId", candidate.CustomerId)),
+            "DetectAnomalies" => DetectAnomalies(JsonSerializer.Serialize(candidate, JsonOptions)),
+            "AnalyseFinancialGraph" => AnalyseFinancialGraph(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
+            "ComparePeerGroup" => ComparePeerGroup(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
+            "GetPreviousHumanReviews" => GetPreviousHumanReviews(ScopedArg(arguments, "customerId", candidate.CustomerId)),
+            "SearchHistoricalCases" => SearchHistoricalCases(Arg(arguments, "query", candidate.MerchantId)),
+            "RetrieveEvidence" => RetrieveScopedEvidence(RequiredArg(arguments, "evidenceId"), candidate),
+            "CalculateRiskSignals" => CalculateRiskSignals(JsonSerializer.Serialize(candidate, JsonOptions)),
+            _ => throw new InvalidOperationException($"Tool '{tool}' is not on the Level-3 investigation allow-list.")
+        };
+        return Json(new { Classification = "UNTRUSTED_TOOL_OUTPUT", SourceTool = tool, Payload = JsonDocument.Parse(raw).RootElement.Clone() });
+    }
 
     [KernelFunction("get_customer_history")]
     [Description("Returns prior transactions for a customer.")]
@@ -125,6 +130,23 @@ public sealed class InvestigationTools
         ?? throw new ArgumentException("Could not parse candidate transaction JSON.");
     private static string Arg(IReadOnlyDictionary<string, string> args, string name, string fallback) =>
         args.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : fallback;
+    private static string ScopedArg(IReadOnlyDictionary<string, string> args, string name, string expected)
+    {
+        var actual = Arg(args, name, expected);
+        if (!string.Equals(actual, expected, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Tool argument '{name}' is outside the candidate transaction scope.");
+        return actual;
+    }
+    private string RetrieveScopedEvidence(string evidenceId, TransactionEvent candidate)
+    {
+        var evidence = _memory.RetrieveEvidence(evidenceId);
+        if (evidence is null) return Json(null);
+        var allowedSubjects = new[] { candidate.TransactionId, candidate.CustomerId, candidate.MerchantId,
+            candidate.DeviceId, candidate.BeneficiaryId }.Where(s => s is not null);
+        if (!allowedSubjects.Contains(evidence.SubjectId, StringComparer.Ordinal))
+            throw new InvalidOperationException("Evidence does not belong to the candidate transaction scope.");
+        return Json(evidence);
+    }
     private static string RequiredArg(IReadOnlyDictionary<string, string> args, string name) =>
         args.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : throw new ArgumentException($"Tool argument '{name}' is required.");
     private static int ObservationDays(IReadOnlyList<TransactionEvent> history) => history.Count < 2 ? 1

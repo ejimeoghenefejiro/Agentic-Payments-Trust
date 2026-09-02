@@ -296,6 +296,11 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains("HUMAN_APPROVAL_REQUIRED", body.GetProperty("reasonCodes").EnumerateArray().Select(r => r.GetString()));
         var intelligence = body.GetProperty("intelligence");
         Assert.Equal("Approve", intelligence.GetProperty("recommendation").GetString());
+
+        // Intelligence evidence is advisory and must not be promoted into the authoritative
+        // policy evidence manifest merely because an AI/analytics component emitted it.
+        var stored = await _client.GetFromJsonAsync<JsonElement>($"/api/transactions/{txId}");
+        Assert.Equal(0, stored.GetProperty("intent").GetProperty("evidence").GetArrayLength());
     }
 
     [Fact]

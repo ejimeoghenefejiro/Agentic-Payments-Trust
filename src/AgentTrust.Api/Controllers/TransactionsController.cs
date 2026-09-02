@@ -79,12 +79,10 @@ public sealed class TransactionsController : ControllerBase
             var graph = RelationshipAnalyzer.BuildGraph(merchantHistory.Append(candidate));
             investigation = _investigationPlanner.Investigate(candidate, graph);
 
-            // Merge intelligence evidence into the same manifest the trust layer will see —
-            // advisory only: this never changes the decision logic itself, only what evidence
-            // is on record for the (unmodified) PolicyEngine's evidence-sufficiency check and
-            // for the audit trail.
-            intent = intent with { Evidence = intent.Evidence.Concat(investigation.FinalAssessment.EvidenceReferences).ToList() };
-            _eventStore.Record(candidate);
+            // Intelligence output remains advisory and is returned separately. It is deliberately
+            // not promoted into the authoritative EvidenceManifest: model/analytics-produced
+            // references must never satisfy deterministic policy evidence requirements merely
+            // because the intelligence layer emitted them. InvestigationAgent records the event.
         }
 
         var manifest = new EvidenceManifest(intent.TransactionId, intent.Evidence.ToList(), Array.Empty<string>());
