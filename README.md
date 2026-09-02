@@ -235,6 +235,40 @@ for both SQL Server and PostgreSQL, while `InMemorySemanticCaseStore` supports i
 The API continues to use the conservative lexical fallback until an `ITextEmbeddingService` is
 explicitly configured; it never pretends lexical matching is semantic retrieval.
 
+### Part 5 next — real embeddings and the B2/B3 treatment
+
+The API now supplies a production-capable OpenAI embeddings adapter outside the intelligence
+domain. Semantic memory remains disabled by default and activates only through explicit settings:
+
+```text
+Intelligence__SemanticMemory__Enabled=true
+Intelligence__SemanticMemory__Provider=OpenAI
+Intelligence__SemanticMemory__Model=text-embedding-3-small
+Intelligence__SemanticMemory__Dimensions=1536
+Intelligence__SemanticMemory__Endpoint=https://api.openai.com/v1/
+OPENAI_API_KEY=<runtime secret>
+```
+
+The endpoint must be HTTPS, responses must contain exactly the configured number of finite vector
+values, and no key is stored in tracked configuration. Every persisted vector records provider,
+model, optional model version, dimensions and creation time. Retrieval excludes vectors generated
+by an incompatible provider/model/dimension combination; provider changes therefore cannot
+silently contaminate an experiment. Apply the provider-specific `AddEmbeddingProvenance`
+migration before enabling B3 against an existing database.
+
+The controlled corpus at `research/semantic-memory-corpus.json` contains scoped/global, relevant,
+irrelevant, contradictory, cross-customer and stored-prompt-injection cases. Relevance labels are
+declared independently of retrieval and validated before a study runs. Poisoned text may be
+retrieved but remains `UNTRUSTED_TOOL_OUTPUT` with no policy, authority or payment capability.
+
+`B2B3ExperimentRunner` enforces the experimental arms: B0 deterministic boundary, B2 Level 3
+without semantic treatment, and B3 with semantic memory. Every arm receives the same cases for
+each configured repetition. Reports now include repetition IDs, semantic precision/recall,
+Recall@K, mean reciprocal rank, relevant-case hit rate, irrelevant-memory usage, recommendation
+stability, existing reasoning/outcome/calibration/latency measures, all pairwise comparisons, and
+unauthorised executions. JSON and CSV exports retain the full protocol and per-trial retrieval IDs.
+B3 is an intelligence treatment only; deterministic payment authority is unchanged.
+
 The feedback pipeline now records investigation linkage, agent/human confidence, reason codes,
 useful and misleading evidence, outcome source, and validation provenance. New feedback is
 `Pending` by default and is excluded from the curated dataset until a named validator marks it
@@ -331,7 +365,7 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ```bash
 dotnet build
-dotnet test                                  # 142 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
+dotnet test                                  # 150 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 

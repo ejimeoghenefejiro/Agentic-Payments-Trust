@@ -49,6 +49,11 @@ public sealed class SemanticCaseEntity
     public string Outcome { get; set; } = "";
     public string TagsJson { get; set; } = "[]";
     public string EmbeddingJson { get; set; } = "[]";
+    public string EmbeddingProvider { get; set; } = "";
+    public string EmbeddingModel { get; set; } = "";
+    public string? EmbeddingModelVersion { get; set; }
+    public int EmbeddingDimensions { get; set; }
+    public DateTimeOffset EmbeddingCreatedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

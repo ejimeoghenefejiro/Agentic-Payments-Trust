@@ -147,6 +147,11 @@ public sealed class EfSemanticCaseStore : ISemanticCaseStore
             Outcome = record.Case.Outcome,
             TagsJson = JsonSerializer.Serialize(record.Case.Tags, JsonOptions),
             EmbeddingJson = JsonSerializer.Serialize(record.Embedding, JsonOptions),
+            EmbeddingProvider = record.Provenance?.Provider ?? "legacy",
+            EmbeddingModel = record.Provenance?.Model ?? "unknown",
+            EmbeddingModelVersion = record.Provenance?.ModelVersion,
+            EmbeddingDimensions = record.Provenance?.Dimensions ?? record.Embedding.Count,
+            EmbeddingCreatedAt = record.Provenance?.CreatedAt ?? DateTimeOffset.UtcNow,
             ResolvedAt = record.Case.ResolvedAt,
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -164,7 +169,9 @@ public sealed class EfSemanticCaseStore : ISemanticCaseStore
             .Select(e => new SemanticCaseRecord(
                 new HistoricalCaseMemory(e.CaseId, e.Title, e.Narrative, e.Outcome,
                     JsonSerializer.Deserialize<List<string>>(e.TagsJson, JsonOptions) ?? [], e.ScopeId, e.ResolvedAt),
-                JsonSerializer.Deserialize<List<float>>(e.EmbeddingJson, JsonOptions) ?? []))
+                JsonSerializer.Deserialize<List<float>>(e.EmbeddingJson, JsonOptions) ?? [],
+                new EmbeddingProvenance(e.EmbeddingProvider, e.EmbeddingModel, e.EmbeddingModelVersion,
+                    e.EmbeddingDimensions, e.EmbeddingCreatedAt)))
             .ToList();
     }
 }

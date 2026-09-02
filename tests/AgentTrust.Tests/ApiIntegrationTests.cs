@@ -4,6 +4,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using AgentTrust.Intelligence.Investigation;
 using Xunit;
 
 namespace AgentTrust.Tests;
@@ -27,6 +29,7 @@ namespace AgentTrust.Tests;
 public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;
+    private readonly WebApplicationFactory<Program> _factory;
 
     public ApiIntegrationTests(WebApplicationFactory<Program> factory)
     {
@@ -39,7 +42,33 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
                 ["ConnectionStrings:Postgres"] = null
             }));
         });
+        _factory = hermeticFactory;
         _client = hermeticFactory.CreateClient();
+    }
+
+    [Fact]
+    public void SemanticMemoryIsLexicalWhenProviderIsNotExplicitlyEnabled()
+    {
+        using var scope = _factory.Services.CreateScope();
+        Assert.IsType<InMemoryInvestigationMemory>(scope.ServiceProvider.GetRequiredService<IInvestigationMemory>());
+        Assert.Throws<InvalidOperationException>(() => scope.ServiceProvider.GetRequiredService<ITextEmbeddingService>());
+    }
+
+    [Fact]
+    public void SemanticMemoryActivatesOnlyWithExplicitCompleteConfiguration()
+    {
+        using var semanticFactory = _factory.WithWebHostBuilder(builder => builder
+            .UseSetting("Intelligence:SemanticMemory:Enabled", "true")
+            .UseSetting("Intelligence:SemanticMemory:Provider", "OpenAI")
+            .UseSetting("Intelligence:SemanticMemory:Model", "test-embedding-model")
+            .UseSetting("Intelligence:SemanticMemory:Dimensions", "3")
+            .UseSetting("Intelligence:SemanticMemory:Endpoint", "https://embeddings.example/v1/")
+            .UseSetting("Intelligence:SemanticMemory:ApiKey", "runtime-test-secret"));
+        using var scope = semanticFactory.Services.CreateScope();
+
+        Assert.IsType<SemanticInvestigationMemory>(scope.ServiceProvider.GetRequiredService<IInvestigationMemory>());
+        var embeddings = Assert.IsType<AgentTrust.Api.OpenAiTextEmbeddingService>(scope.ServiceProvider.GetRequiredService<ITextEmbeddingService>());
+        Assert.Equal("test-embedding-model", embeddings.Model);
     }
 
     [Fact]

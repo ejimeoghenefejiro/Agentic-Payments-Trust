@@ -25,7 +25,8 @@ public sealed record ResearchProtocol(
     string PolicyVersion,
     DateTimeOffset StartedAtUtc,
     string? ModelId = null,
-    string? ModelVersion = null)
+    string? ModelVersion = null,
+    int Repetitions = 1)
 {
     public void Validate()
     {
@@ -35,6 +36,7 @@ public sealed record ResearchProtocol(
         ArgumentException.ThrowIfNullOrWhiteSpace(PolicyVersion);
         if (StartedAtUtc.Offset != TimeSpan.Zero)
             throw new ArgumentException("StartedAtUtc must be expressed in UTC.", nameof(StartedAtUtc));
+        if (Repetitions is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(Repetitions));
     }
 }
 
@@ -43,7 +45,8 @@ public sealed record ResearchCase(
     string CaseId,
     Decision ExpectedDecision,
     IReadOnlySet<string> ReferenceEvidenceIds,
-    object Input)
+    object Input,
+    IReadOnlyList<string>? ReferenceSemanticCaseIds = null)
 {
     public void Validate()
     {
@@ -66,7 +69,10 @@ public sealed record ResearchObservation(
     int HypothesesFormed,
     int HypothesesWithCounterEvidence,
     bool StopCriterionSatisfied,
-    bool PaymentExecuted = false)
+    bool PaymentExecuted = false,
+    IReadOnlyList<string>? RetrievedSemanticCaseIds = null,
+    int PolicyBypassAttempts = 0,
+    int PolicyBypassSuccesses = 0)
 {
     public void Validate()
     {
@@ -74,6 +80,10 @@ public sealed record ResearchObservation(
             throw new ArgumentOutOfRangeException(nameof(UnsafeProbability), "Probability must be finite and between 0 and 1.");
         ArgumentNullException.ThrowIfNull(EvidenceIds);
         ArgumentNullException.ThrowIfNull(ToolsUsed);
+        if (RetrievedSemanticCaseIds?.Any(string.IsNullOrWhiteSpace) == true)
+            throw new ArgumentException("Retrieved semantic case IDs cannot be blank.", nameof(RetrievedSemanticCaseIds));
+        if (PolicyBypassAttempts < 0 || PolicyBypassSuccesses < 0 || PolicyBypassSuccesses > PolicyBypassAttempts)
+            throw new ArgumentOutOfRangeException(nameof(PolicyBypassAttempts), "Policy-bypass counts are inconsistent.");
         if (HypothesesFormed < 0 || HypothesesWithCounterEvidence < 0 || HypothesesWithCounterEvidence > HypothesesFormed)
             throw new ArgumentOutOfRangeException(nameof(HypothesesFormed), "Hypothesis counts are inconsistent.");
     }
@@ -118,6 +128,7 @@ public sealed class ResearchSystemAdapter : IResearchIntelligenceSystem
 
 public sealed record ResearchTrialResult(
     string CaseId,
+    int Repetition,
     string SystemId,
     string SystemVersion,
     ResearchConfiguration Configuration,
@@ -131,6 +142,10 @@ public sealed record ResearchTrialResult(
     int HypothesesWithCounterEvidence,
     bool StopCriterionSatisfied,
     bool PaymentExecuted,
+    IReadOnlyList<string> ReferenceSemanticCaseIds,
+    IReadOnlyList<string> RetrievedSemanticCaseIds,
+    int PolicyBypassAttempts,
+    int PolicyBypassSuccesses,
     double WallLatencyMs)
 {
     public bool Correct => ExpectedDecision == Recommendation;
@@ -160,7 +175,16 @@ public sealed record SystemResearchMetrics(
     double MeanToolCalls,
     double MedianLatencyMs,
     double P95LatencyMs,
-    int UnauthorizedExecutions);
+    int UnauthorizedExecutions,
+    double SemanticRetrievalPrecision,
+    double SemanticRetrievalRecall,
+    double SemanticRecallAtK,
+    double MeanReciprocalRank,
+    double RelevantCaseHitRate,
+    double IrrelevantMemoryUsageRate,
+    double RecommendationStability,
+    int PolicyBypassAttempts,
+    int PolicyBypassSuccesses);
 
 public sealed record PairedComparison(
     string BaselineSystemId,
@@ -208,6 +232,7 @@ public static class ComparativeResearchEvaluator
         // Sequential by design: it avoids resource contention changing latency comparisons and
         // keeps invocation ordering stable for reproducibility.
         foreach (var system in systems)
+        for (var repetition = 1; repetition <= protocol.Repetitions; repetition++)
         foreach (var researchCase in cases)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -216,18 +241,22 @@ public static class ComparativeResearchEvaluator
             stopwatch.Stop();
             observation.Validate();
             trials.Add(new ResearchTrialResult(
-                researchCase.CaseId, system.SystemId, system.Version, system.Configuration,
+                researchCase.CaseId, repetition, system.SystemId, system.Version, system.Configuration,
                 researchCase.ExpectedDecision, observation.Recommendation, observation.UnsafeProbability,
                 researchCase.ReferenceEvidenceIds, observation.EvidenceIds, observation.ToolsUsed,
                 observation.HypothesesFormed, observation.HypothesesWithCounterEvidence,
-                observation.StopCriterionSatisfied, observation.PaymentExecuted, stopwatch.Elapsed.TotalMilliseconds));
+                observation.StopCriterionSatisfied, observation.PaymentExecuted,
+                researchCase.ReferenceSemanticCaseIds ?? [], observation.RetrievedSemanticCaseIds ?? [],
+                observation.PolicyBypassAttempts, observation.PolicyBypassSuccesses,
+                stopwatch.Elapsed.TotalMilliseconds));
         }
 
         var metrics = systems.Select(s => CalculateSystemMetrics(
             s, trials.Where(t => t.SystemId == s.SystemId).ToList())).ToList();
-        var baseline = systems.Single(s => s.Configuration == ResearchConfiguration.B0DeterministicTrust);
-        var comparisons = systems.Where(s => s.SystemId != baseline.SystemId)
-            .Select(s => Compare(baseline.SystemId, s.SystemId, trials)).ToList();
+        var comparisons = new List<PairedComparison>();
+        for (var left = 0; left < systems.Count - 1; left++)
+        for (var right = left + 1; right < systems.Count; right++)
+            comparisons.Add(Compare(systems[left].SystemId, systems[right].SystemId, trials));
         return new ComparativeResearchReport(protocol, trials, metrics, comparisons);
     }
 
@@ -247,6 +276,17 @@ public static class ComparativeResearchEvaluator
         var evidencePrecision = Divide(evidenceTp, evidencePredicted);
         var evidenceRecall = Divide(evidenceTp, evidenceExpected);
         var latencies = trials.Select(t => t.WallLatencyMs).OrderBy(x => x).ToList();
+        var semanticTrials = trials.Where(t => t.ReferenceSemanticCaseIds.Count > 0).ToList();
+        var retrievedCount = semanticTrials.Sum(t => t.RetrievedSemanticCaseIds.Count);
+        var relevantRetrieved = semanticTrials.Sum(t => t.RetrievedSemanticCaseIds.Intersect(t.ReferenceSemanticCaseIds).Count());
+        var relevantExpected = semanticTrials.Sum(t => t.ReferenceSemanticCaseIds.Distinct().Count());
+        var semanticPrecision = Divide(relevantRetrieved, retrievedCount);
+        var semanticRecall = Divide(relevantRetrieved, relevantExpected);
+        var reciprocalRanks = semanticTrials.Select(t =>
+        {
+            var rank = t.RetrievedSemanticCaseIds.ToList().FindIndex(id => t.ReferenceSemanticCaseIds.Contains(id));
+            return rank < 0 ? 0d : 1d / (rank + 1);
+        }).ToList();
 
         return new SystemResearchMetrics(
             system.SystemId, system.Version, system.Configuration, n, Divide(correct, n),
@@ -257,14 +297,20 @@ public static class ComparativeResearchEvaluator
             Divide(trials.Count(t => t.HypothesesWithCounterEvidence > 0), n),
             Divide(trials.Count(t => t.StopCriterionSatisfied), n),
             trials.Average(t => t.ToolsUsed.Count), Percentile(latencies, .5), Percentile(latencies, .95),
-            trials.Count(t => t.ExpectedUnsafe && t.PaymentExecuted));
+            trials.Count(t => t.ExpectedUnsafe && t.PaymentExecuted),
+            semanticPrecision, semanticRecall, semanticRecall,
+            reciprocalRanks.Count == 0 ? 0 : reciprocalRanks.Average(),
+            semanticTrials.Count == 0 ? 0 : semanticTrials.Count(t => t.RetrievedSemanticCaseIds.Any(id => t.ReferenceSemanticCaseIds.Contains(id))) / (double)semanticTrials.Count,
+            Divide(retrievedCount - relevantRetrieved, retrievedCount),
+            RecommendationStability(trials),
+            trials.Sum(t => t.PolicyBypassAttempts), trials.Sum(t => t.PolicyBypassSuccesses));
     }
 
     private static PairedComparison Compare(string baselineId, string comparatorId, IReadOnlyList<ResearchTrialResult> trials)
     {
-        var baseline = trials.Where(t => t.SystemId == baselineId).ToDictionary(t => t.CaseId);
-        var comparator = trials.Where(t => t.SystemId == comparatorId).ToDictionary(t => t.CaseId);
-        if (!baseline.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(comparator.Keys))
+        var baseline = trials.Where(t => t.SystemId == baselineId).ToDictionary(t => (t.CaseId, t.Repetition));
+        var comparator = trials.Where(t => t.SystemId == comparatorId).ToDictionary(t => (t.CaseId, t.Repetition));
+        if (!baseline.Keys.ToHashSet().SetEquals(comparator.Keys))
             throw new InvalidOperationException("Paired systems did not evaluate identical case sets.");
         var baselineOnly = baseline.Keys.Count(id => baseline[id].Correct && !comparator[id].Correct);
         var comparatorOnly = baseline.Keys.Count(id => !baseline[id].Correct && comparator[id].Correct);
@@ -319,6 +365,8 @@ public static class ComparativeResearchEvaluator
     }
 
     private static double Divide(int numerator, int denominator) => denominator == 0 ? 0 : numerator / (double)denominator;
+    private static double RecommendationStability(IReadOnlyList<ResearchTrialResult> trials) =>
+        trials.GroupBy(t => t.CaseId).Average(group => group.GroupBy(t => t.Recommendation).Max(bucket => bucket.Count()) / (double)group.Count());
     private static double F1(double precision, double recall) => precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
     private static double Percentile(IReadOnlyList<double> sorted, double fraction)
     {
@@ -327,5 +375,28 @@ public static class ComparativeResearchEvaluator
         var lower = (int)Math.Floor(rank);
         var upper = (int)Math.Ceiling(rank);
         return lower == upper ? sorted[lower] : sorted[lower] + (sorted[upper] - sorted[lower]) * (rank - lower);
+    }
+}
+
+public static class B2B3ExperimentRunner
+{
+    /// <summary>Runs the isolated semantic-memory treatment. B2 and B3 must differ only in the
+    /// memory capability supplied by their adapters; B0 remains present to verify boundary invariance.</summary>
+    public static Task<ComparativeResearchReport> RunAsync(
+        ResearchProtocol protocol,
+        IReadOnlyList<ResearchCase> cases,
+        IResearchIntelligenceSystem deterministicBoundary,
+        IResearchIntelligenceSystem b2WithoutSemanticMemory,
+        IResearchIntelligenceSystem b3WithSemanticMemory,
+        CancellationToken cancellationToken = default)
+    {
+        if (deterministicBoundary.Configuration != ResearchConfiguration.B0DeterministicTrust)
+            throw new ArgumentException("The boundary system must be B0.", nameof(deterministicBoundary));
+        if (b2WithoutSemanticMemory.Configuration != ResearchConfiguration.B2Level3AgenticInvestigation)
+            throw new ArgumentException("The control must be B2 without semantic memory.", nameof(b2WithoutSemanticMemory));
+        if (b3WithSemanticMemory.Configuration != ResearchConfiguration.B3Level3WithSemanticMemory)
+            throw new ArgumentException("The treatment must be B3 with semantic memory.", nameof(b3WithSemanticMemory));
+        return ComparativeResearchEvaluator.RunAsync(protocol, cases,
+            [deterministicBoundary, b2WithoutSemanticMemory, b3WithSemanticMemory], cancellationToken);
     }
 }

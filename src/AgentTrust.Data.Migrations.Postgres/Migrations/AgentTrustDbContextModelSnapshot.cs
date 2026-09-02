@@ -454,7 +454,24 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.Property<string>("CaseId")
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset>("EmbeddingCreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EmbeddingDimensions")
+                        .HasColumnType("integer");
+
                     b.Property<string>("EmbeddingJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EmbeddingModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EmbeddingModelVersion")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EmbeddingProvider")
                         .IsRequired()
                         .HasColumnType("text");
 

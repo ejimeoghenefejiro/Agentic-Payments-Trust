@@ -1,4 +1,5 @@
 using AgentTrust.Agents;
+using AgentTrust.Api;
 using AgentTrust.Core;
 using AgentTrust.Data;
 using AgentTrust.Evidence;
@@ -16,8 +17,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
-// OpenAI key/model: configuration ("OpenAI:ApiKey"/"OpenAI:Model", e.g. from
-// appsettings.Development.json) takes priority over the OPENAI_API_KEY/OPENAI_MODEL
+// OpenAI key/model: secret configuration ("OpenAI:ApiKey"/"OpenAI:Model") takes priority over
+// OPENAI_API_KEY/OPENAI_MODEL. Credentials must not be stored in appsettings files.
 // environment variables. Never put a real key in appsettings.json — only in
 // appsettings.Development.json, which is gitignored.
 AgentFactory.ConfiguredApiKey = builder.Configuration["OpenAI:ApiKey"];
@@ -65,6 +66,7 @@ if (!string.IsNullOrWhiteSpace(sqlServerConnectionString) || !string.IsNullOrWhi
     builder.Services.AddScoped<IProfileHistoryStore, EfProfileHistoryStore>();
     builder.Services.AddScoped<IInvestigationStateStore, EfInvestigationStateStore>();
     builder.Services.AddScoped<IOutcomeStore, EfOutcomeStore>();
+    builder.Services.AddScoped<ISemanticCaseStore, EfSemanticCaseStore>();
 }
 else
 {
@@ -86,6 +88,7 @@ else
     builder.Services.AddSingleton<IProfileHistoryStore, InMemoryProfileHistoryStore>();
     builder.Services.AddSingleton<IInvestigationStateStore, InMemoryInvestigationStateStore>();
     builder.Services.AddSingleton<IOutcomeStore, InMemoryOutcomeStore>();
+    builder.Services.AddSingleton<ISemanticCaseStore, InMemorySemanticCaseStore>();
 }
 
 builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
@@ -102,7 +105,38 @@ builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>
 // for the app's lifetime, which costs nothing here since these are practically stateless).
 // TransactionRiskEngine/DeviceRiskEngine/MerchantRiskEngine take all their input as method
 // parameters rather than injected stores, so they can stay Singleton.
-builder.Services.AddSingleton<IInvestigationMemory, InMemoryInvestigationMemory>();
+var semanticSection = builder.Configuration.GetSection("Intelligence:SemanticMemory");
+var semanticEnabled = semanticSection.GetValue<bool>("Enabled");
+if (semanticEnabled)
+{
+    var provider = semanticSection["Provider"];
+    var model = semanticSection["Model"];
+    var modelVersion = semanticSection["ModelVersion"];
+    var dimensions = semanticSection.GetValue<int>("Dimensions");
+    var endpoint = semanticSection["Endpoint"];
+    var apiKey = semanticSection["ApiKey"] ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+    if (!string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Enabled semantic memory currently requires Provider=OpenAI.");
+    if (string.IsNullOrWhiteSpace(model) || dimensions <= 0 || string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(apiKey))
+        throw new InvalidOperationException("Enabled semantic memory requires Model, Dimensions, Endpoint and OPENAI_API_KEY (or secret configuration).");
+    if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var embeddingEndpoint) || embeddingEndpoint.Scheme != Uri.UriSchemeHttps)
+        throw new InvalidOperationException("Semantic-memory Endpoint must be an absolute HTTPS URI.");
+
+    builder.Services.AddHttpClient("semantic-embeddings", client =>
+    {
+        client.BaseAddress = embeddingEndpoint;
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
+    builder.Services.AddScoped<ITextEmbeddingService>(sp => new OpenAiTextEmbeddingService(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("semantic-embeddings"), apiKey, model, dimensions, modelVersion));
+    builder.Services.AddScoped<IInvestigationMemory>(sp => new SemanticInvestigationMemory(
+        sp.GetRequiredService<ITextEmbeddingService>(), sp.GetRequiredService<ISemanticCaseStore>(),
+        new InMemoryInvestigationMemory(), semanticSection.GetValue("MinimumSimilarity", .2)));
+}
+else
+{
+    builder.Services.AddSingleton<IInvestigationMemory, InMemoryInvestigationMemory>();
+}
 builder.Services.AddSingleton<TransactionRiskEngine>(_ => new TransactionRiskEngine(
     new IAnomalyDetector[] { new TransactionAnomalyDetector(), new AmountAnomalyDetector(), new VelocityDetector() },
     new EvidenceCollector()));

@@ -17,16 +17,18 @@ public static class ExperimentReportWriter
             JsonSerializer.Serialize(report, options));
 
         var trials = new StringBuilder();
-        trials.AppendLine("case_id,system_id,system_version,configuration,expected_decision,recommendation,unsafe_probability,correct,evidence_ids,tools_used,hypotheses,counterevidence_hypotheses,stop_criterion,payment_executed,wall_latency_ms");
+        trials.AppendLine("case_id,repetition,system_id,system_version,configuration,expected_decision,recommendation,unsafe_probability,correct,evidence_ids,tools_used,hypotheses,counterevidence_hypotheses,stop_criterion,payment_executed,reference_semantic_case_ids,retrieved_semantic_case_ids,policy_bypass_attempts,policy_bypass_successes,wall_latency_ms");
         foreach (var trial in report.Trials)
         {
             trials.AppendLine(string.Join(",",
-                Csv(trial.CaseId), Csv(trial.SystemId), Csv(trial.SystemVersion), Csv(trial.Configuration.ToString()),
+                Csv(trial.CaseId), Csv(trial.Repetition), Csv(trial.SystemId), Csv(trial.SystemVersion), Csv(trial.Configuration.ToString()),
                 Csv(trial.ExpectedDecision.ToString()), Csv(trial.Recommendation.ToString()), Csv(trial.UnsafeProbability),
                 Csv(trial.Correct), Csv(string.Join(";", trial.EvidenceIds.OrderBy(x => x))),
                 Csv(string.Join(";", trial.ToolsUsed)), Csv(trial.HypothesesFormed),
                 Csv(trial.HypothesesWithCounterEvidence), Csv(trial.StopCriterionSatisfied),
-                Csv(trial.PaymentExecuted), Csv(trial.WallLatencyMs)));
+                Csv(trial.PaymentExecuted), Csv(string.Join(";", trial.ReferenceSemanticCaseIds)),
+                Csv(string.Join(";", trial.RetrievedSemanticCaseIds)), Csv(trial.PolicyBypassAttempts),
+                Csv(trial.PolicyBypassSuccesses), Csv(trial.WallLatencyMs)));
         }
         File.WriteAllText(Path.Combine(outputDir, "comparative_trials.csv"), trials.ToString());
     }

@@ -2,11 +2,24 @@ namespace AgentTrust.Intelligence.Investigation;
 
 public interface ITextEmbeddingService
 {
+    string Provider { get; }
+    string Model { get; }
+    string? ModelVersion { get; }
     int Dimensions { get; }
     ValueTask<ReadOnlyMemory<float>> EmbedAsync(string text, CancellationToken cancellationToken = default);
 }
 
-public sealed record SemanticCaseRecord(HistoricalCaseMemory Case, IReadOnlyList<float> Embedding);
+public sealed record EmbeddingProvenance(
+    string Provider,
+    string Model,
+    string? ModelVersion,
+    int Dimensions,
+    DateTimeOffset CreatedAt);
+
+public sealed record SemanticCaseRecord(
+    HistoricalCaseMemory Case,
+    IReadOnlyList<float> Embedding,
+    EmbeddingProvenance? Provenance = null);
 
 public interface ISemanticCaseStore
 {
@@ -66,7 +79,8 @@ public sealed class SemanticInvestigationMemory : IScopedInvestigationMemory
         ValidateCase(historicalCase);
         var vector = await _embeddings.EmbedAsync(CaseText(historicalCase), cancellationToken).ConfigureAwait(false);
         ValidateVector(vector.Span, _embeddings.Dimensions);
-        _cases.Upsert(new SemanticCaseRecord(historicalCase, vector.ToArray()));
+        _cases.Upsert(new SemanticCaseRecord(historicalCase, vector.ToArray(), new EmbeddingProvenance(
+            _embeddings.Provider, _embeddings.Model, _embeddings.ModelVersion, _embeddings.Dimensions, DateTimeOffset.UtcNow)));
     }
 
     public IReadOnlyList<HistoricalCaseMemory> SearchHistoricalCases(string query) =>
@@ -81,6 +95,9 @@ public sealed class SemanticInvestigationMemory : IScopedInvestigationMemory
         ValidateVector(queryVector.Span, _embeddings.Dimensions);
 
         return _cases.GetByScope(scopeId)
+            .Where(record => record.Provenance is null ||
+                (record.Provenance.Provider == _embeddings.Provider && record.Provenance.Model == _embeddings.Model &&
+                 record.Provenance.Dimensions == _embeddings.Dimensions))
             .Select(record => (record.Case, Score: Cosine(queryVector.Span, record.Embedding)))
             .Where(match => match.Score >= _minimumSimilarity)
             .OrderByDescending(match => match.Score)

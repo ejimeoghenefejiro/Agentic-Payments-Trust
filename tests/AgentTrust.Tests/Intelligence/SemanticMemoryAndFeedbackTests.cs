@@ -66,7 +66,7 @@ public sealed class SemanticMemoryAndFeedbackTests
             var store = new EfSemanticCaseStore(writeDb);
             store.Upsert(new SemanticCaseRecord(
                 new HistoricalCaseMemory("case-1", "Travel", "New phone abroad", "Legitimate", ["travel"], "customer-1"),
-                new[] { 1f, 0f, 0f }));
+                new[] { 1f, 0f, 0f }, new EmbeddingProvenance("Test", "ConceptEmbedding", "1", 3, DateTimeOffset.UtcNow)));
             store.Upsert(new SemanticCaseRecord(
                 new HistoricalCaseMemory("case-2", "Travel", "Other customer", "Legitimate", [], "customer-2"),
                 new[] { 1f, 0f, 0f }));
@@ -76,6 +76,7 @@ public sealed class SemanticMemoryAndFeedbackTests
         var result = new EfSemanticCaseStore(readDb).GetByScope("customer-1");
         Assert.Equal("case-1", Assert.Single(result).Case.CaseId);
         Assert.Equal(new[] { 1f, 0f, 0f }, result[0].Embedding);
+        Assert.Equal("ConceptEmbedding", result[0].Provenance!.Model);
     }
 
     [Fact]
@@ -104,6 +105,9 @@ public sealed class SemanticMemoryAndFeedbackTests
 
     private sealed class ConceptEmbeddingService : ITextEmbeddingService
     {
+        public string Provider => "Test";
+        public string Model => "ConceptEmbedding";
+        public string? ModelVersion => "1";
         public int Dimensions => 3;
 
         public ValueTask<ReadOnlyMemory<float>> EmbedAsync(string text, CancellationToken cancellationToken = default)
