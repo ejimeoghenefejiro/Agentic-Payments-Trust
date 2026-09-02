@@ -1,6 +1,6 @@
-# Trustworthy Agentic Payments — Prototype
+# Trustworthy Agentic Payments
 
-## Level 3 — agentic financial reasoning
+## Level 3 : agentic financial reasoning
 
 `FinancialInvestigationAgent` is the first autonomous, iterative investigation layer above the
 existing deterministic analytics. A Semantic Kernel model maintains explicit competing
@@ -104,7 +104,7 @@ implementations and concurrency-safe within one process. Production deployment m
 interfaces with database uniqueness/transactions shared by every server, add PSP webhooks/outbox
 reconciliation, and configure authenticated human approval with step-up authentication.
 
-## Part 3 — hardened LLM trust boundary
+## Part 3 : hardened LLM trust boundary
 
 The Level 3 investigator is treated as an untrusted, potentially hostile component. Its safety
 does not depend on the system prompt or on the model choosing to behave:
@@ -139,7 +139,7 @@ cross-customer queries, cross-subject evidence retrieval, oversized responses, s
 injection and fabricated approval evidence. All attempts remain above the deterministic trust
 boundary and produce zero payment capabilities.
 
-## Part 4 — research-grade comparative evaluation
+## Part 4 : research-grade comparative evaluation
 
 The deterministic engine is retained as the mandatory **B0 baseline**. It is not thrown away when
 Level 3 or learned models are added. `ComparativeResearchEvaluator` runs every intelligence
@@ -154,6 +154,8 @@ The planned ablation ladder is explicit in `ResearchConfiguration`:
 - **B2:** bounded Level 3 agentic investigation.
 - **B3:** Level 3 plus semantic case memory.
 - **B4:** Level 3 plus calibrated learned risk signals.
+
+Model and intelligence behaviour may vary across B1–B4, while the deterministic financial-authority boundary is expected to remain invariant, with zero unauthorised executions across all configurations.
 
 Each run records a study ID, dataset/version, fixed seed, policy version, UTC start time and
 optional model/version. Per-case trials retain the expected and recommended decisions, unsafe
