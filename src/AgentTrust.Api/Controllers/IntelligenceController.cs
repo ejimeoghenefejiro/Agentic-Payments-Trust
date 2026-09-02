@@ -3,6 +3,7 @@ using AgentTrust.Intelligence.Graph;
 using AgentTrust.Intelligence.Investigation;
 using AgentTrust.Intelligence.Learning;
 using AgentTrust.Intelligence.Risk;
+using AgentTrust.Agents;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AgentTrust.Api.Controllers;
@@ -23,19 +24,45 @@ public sealed class IntelligenceController : ControllerBase
     private readonly InvestigationPlanner _investigationPlanner;
     private readonly MerchantInvestigationAgent _merchantInvestigationAgent;
     private readonly IOutcomeStore _outcomeStore;
+    private readonly InvestigationTools _level3Tools;
+    private readonly IInvestigationStateStore _investigationStates;
 
     public IntelligenceController(
         ITransactionEventStore eventStore,
         IProfileHistoryStore profileHistoryStore,
         InvestigationPlanner investigationPlanner,
         MerchantInvestigationAgent merchantInvestigationAgent,
-        IOutcomeStore outcomeStore)
+        IOutcomeStore outcomeStore,
+        InvestigationTools level3Tools,
+        IInvestigationStateStore investigationStates)
     {
         _eventStore = eventStore;
         _profileHistoryStore = profileHistoryStore;
         _investigationPlanner = investigationPlanner;
         _merchantInvestigationAgent = merchantInvestigationAgent;
         _outcomeStore = outcomeStore;
+        _level3Tools = level3Tools;
+        _investigationStates = investigationStates;
+    }
+
+    /// <summary>Runs the genuine Level-3 iterative investigation loop. Its output is advisory;
+    /// this endpoint has no dependency on the trust framework or payment adapter.</summary>
+    [HttpPost("investigate/level3")]
+    public async Task<IActionResult> InvestigateLevel3([FromBody] TransactionEventDto dto, CancellationToken cancellationToken)
+    {
+        if (!AgentFactory.IsLiveModeConfigured)
+            return Problem("Level-3 investigation requires a configured OpenAI model.", statusCode: 503);
+
+        var agent = new FinancialInvestigationAgent(AgentFactory.CreateLiveKernel(), _level3Tools, _investigationStates);
+        var result = await agent.InvestigateAsync(dto.ToDomain(), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("investigations/{investigationId}")]
+    public IActionResult GetInvestigation(string investigationId)
+    {
+        var state = _investigationStates.Find(investigationId);
+        return state is null ? NotFound() : Ok(state);
     }
 
     /// <summary>Records a raw transaction event into history — the material later investigations

@@ -29,3 +29,13 @@ public sealed class ProfileSnapshotEntity
     public DateTimeOffset TakenAt { get; set; }
     public string ProfileJson { get; set; } = "";
 }
+
+public sealed class InvestigationStateEntity
+{
+    public string InvestigationId { get; set; } = "";
+    public string TransactionId { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string StateJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}

@@ -40,6 +40,11 @@ public static class AgentFactory
     /// fall back gracefully.
     /// </summary>
     public static IPaymentAgent CreateLive(string agentId)
+        => new SemanticKernelPaymentAgent(agentId, CreateLiveKernel());
+
+    /// <summary>Creates a live Semantic Kernel for bounded agents such as the Level-3 financial
+    /// investigator. The caller decides which tool surface the agent can access.</summary>
+    public static Kernel CreateLiveKernel()
     {
         var apiKey = ConfiguredApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -52,8 +57,7 @@ public static class AgentFactory
         var model = ConfiguredModel ?? Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
         var builder = Kernel.CreateBuilder();
         builder.AddOpenAIChatCompletion(model, apiKey);
-        var kernel = builder.Build();
-        return new SemanticKernelPaymentAgent(agentId, kernel);
+        return builder.Build();
     }
 
     public static bool IsLiveModeConfigured =>

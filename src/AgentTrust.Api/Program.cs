@@ -63,6 +63,7 @@ if (!string.IsNullOrWhiteSpace(sqlServerConnectionString) || !string.IsNullOrWhi
     builder.Services.AddScoped<IAuditRecordStore, EfAuditRecordStore>();
     builder.Services.AddScoped<ITransactionEventStore, EfTransactionEventStore>();
     builder.Services.AddScoped<IProfileHistoryStore, EfProfileHistoryStore>();
+    builder.Services.AddScoped<IInvestigationStateStore, EfInvestigationStateStore>();
 }
 else
 {
@@ -82,6 +83,7 @@ else
     builder.Services.AddSingleton<IAuditRecordStore, InMemoryAuditRecordStore>();
     builder.Services.AddSingleton<ITransactionEventStore, InMemoryTransactionEventStore>();
     builder.Services.AddSingleton<IProfileHistoryStore, InMemoryProfileHistoryStore>();
+    builder.Services.AddSingleton<IInvestigationStateStore, InMemoryInvestigationStateStore>();
 }
 
 builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
@@ -99,6 +101,7 @@ builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
 // TransactionRiskEngine/DeviceRiskEngine/MerchantRiskEngine take all their input as method
 // parameters rather than injected stores, so they can stay Singleton.
 builder.Services.AddSingleton<IOutcomeStore, InMemoryOutcomeStore>();
+builder.Services.AddSingleton<IInvestigationMemory, InMemoryInvestigationMemory>();
 builder.Services.AddSingleton<TransactionRiskEngine>(_ => new TransactionRiskEngine(
     new IAnomalyDetector[] { new TransactionAnomalyDetector(), new AmountAnomalyDetector(), new VelocityDetector() },
     new EvidenceCollector()));
@@ -109,6 +112,7 @@ builder.Services.AddScoped<InvestigationAgent>(sp => new InvestigationAgent(
 builder.Services.AddScoped<InvestigationPlanner>(sp => new InvestigationPlanner(
     sp.GetRequiredService<InvestigationAgent>(), sp.GetRequiredService<DeviceRiskEngine>()));
 builder.Services.AddSingleton<MerchantInvestigationAgent>(sp => new MerchantInvestigationAgent(sp.GetRequiredService<MerchantRiskEngine>()));
+builder.Services.AddScoped<InvestigationTools>();
 
 builder.Services.AddScoped<TrustFramework>(sp => new TrustFramework(
     sp.GetRequiredService<IAgentRegistry>(),

@@ -1,5 +1,6 @@
 using AgentTrust.Data;
 using AgentTrust.Intelligence.Behaviour;
+using AgentTrust.Intelligence.Investigation;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -120,5 +121,27 @@ public class IntelligencePersistenceTests : IDisposable
         Assert.Contains(deviations, d => d.Aspect == "SPENDING_RANGE_SHIFT");
         Assert.Contains(deviations, d => d.Aspect == "DEVICE_SET_CHANGED");
         Assert.Contains(deviations, d => d.Aspect == "LOCATION_SET_CHANGED");
+    }
+
+    [Fact]
+    public void Level3InvestigationStateSurvivesDatabaseRoundTrip()
+    {
+        var now = DateTimeOffset.Parse("2027-06-01T12:00:00Z");
+        var state = new InvestigationState
+        {
+            InvestigationId = "inv-1", TransactionId = "tx-1", Objective = "Determine safety",
+            CreatedAt = now, UpdatedAt = now, Turn = 2,
+            Hypotheses = new() { new("H1", "Account takeover", new[] { "new device" }, Array.Empty<string>(), 0.7) },
+            OpenQuestions = new() { "Is the customer travelling?" }
+        };
+
+        new EfInvestigationStateStore(_db).Save(state);
+        var loaded = new EfInvestigationStateStore(_db).Find("inv-1");
+
+        Assert.NotNull(loaded);
+        Assert.Equal("tx-1", loaded!.TransactionId);
+        Assert.Equal(2, loaded.Turn);
+        Assert.Equal("Account takeover", Assert.Single(loaded.Hypotheses).Description);
+        Assert.Equal(InvestigationStatus.Investigating, loaded.Status);
     }
 }

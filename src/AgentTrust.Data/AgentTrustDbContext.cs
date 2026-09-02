@@ -19,6 +19,7 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<AuditRecordEntity> AuditRecords => Set<AuditRecordEntity>();
     public DbSet<TransactionEventEntity> TransactionEvents => Set<TransactionEventEntity>();
     public DbSet<ProfileSnapshotEntity> ProfileSnapshots => Set<ProfileSnapshotEntity>();
+    public DbSet<InvestigationStateEntity> InvestigationStates => Set<InvestigationStateEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -73,6 +74,13 @@ public sealed class AgentTrustDbContext : DbContext
         {
             b.HasKey(e => e.Id);
             b.HasIndex(e => e.EntityId);
+        });
+
+        modelBuilder.Entity<InvestigationStateEntity>(b =>
+        {
+            b.HasKey(e => e.InvestigationId);
+            b.HasIndex(e => e.TransactionId);
+            b.HasIndex(e => e.Status);
         });
     }
 }

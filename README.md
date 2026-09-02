@@ -1,5 +1,34 @@
 # Trustworthy Agentic Payments — Prototype
 
+## Level 3 — agentic financial reasoning
+
+`FinancialInvestigationAgent` is the first autonomous, iterative investigation layer above the
+existing deterministic analytics. A Semantic Kernel model maintains explicit competing
+hypotheses, identifies open questions, selects one bounded investigation tool at a time, inspects
+the returned evidence, challenges its leading conclusion, and stops with a structured advisory
+recommendation. Investigation state is saved after every turn and is EF-persisted when a database
+is configured.
+
+The available tools are `GetCustomerHistory`, `GetMerchantHistory`, `GetDeviceHistory`,
+`GetBeneficiaryHistory`, `CalculateBehaviourProfile`, `DetectAnomalies`,
+`AnalyseFinancialGraph`, `ComparePeerGroup`, `GetPreviousHumanReviews`,
+`SearchHistoricalCases`, `RetrieveEvidence`, and `CalculateRiskSignals`. These wrap the Level 1/2
+detectors, profiles, graph analysis, structured memory, semantic case memory, and risk services;
+they do not replace them.
+
+The boundary is deliberate: `AgentTrust.Intelligence` does not reference orchestration, policy,
+authority, approval, or payments. The Level 3 result is a recommendation only. Deterministic
+controls remain solely responsible for `APPROVE / DENY / ESCALATE` and payment execution.
+
+API endpoints:
+
+- `POST /api/intelligence/investigate/level3` starts a live Level 3 investigation (OpenAI model configuration required).
+- `GET /api/intelligence/investigations/{investigationId}` retrieves the persisted explicit state.
+
+The loop has a configurable turn limit, rejects unknown or repeated identical tool calls, requires
+a counter-hypothesis challenge before completion, and fails safely to an inconclusive escalation
+recommendation when it reaches the turn limit.
+
 C#/.NET reference implementation of the trust and authorisation layer described in
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit

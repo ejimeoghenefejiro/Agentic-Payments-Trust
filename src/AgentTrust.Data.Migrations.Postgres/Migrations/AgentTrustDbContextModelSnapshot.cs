@@ -219,6 +219,38 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("EvidenceManifests");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>
+                {
+                    b.Property<string>("InvestigationId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TransactionId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("InvestigationId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TransactionId");
+
+                    b.ToTable("InvestigationStates");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.MerchantEntity", b =>
                 {
                     b.Property<string>("MerchantId")

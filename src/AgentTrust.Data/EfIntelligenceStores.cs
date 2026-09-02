@@ -35,6 +35,14 @@ public sealed class EfTransactionEventStore : ITransactionEventStore
         _db.TransactionEvents.AsNoTracking().Where(e => e.MerchantId == merchantId).ToList()
             .OrderBy(e => e.Timestamp).Select(ToDomain).ToList();
 
+    public IReadOnlyList<TransactionEvent> GetDeviceHistory(string deviceId) =>
+        _db.TransactionEvents.AsNoTracking().Where(e => e.DeviceId == deviceId).ToList()
+            .OrderBy(e => e.Timestamp).Select(ToDomain).ToList();
+
+    public IReadOnlyList<TransactionEvent> GetBeneficiaryHistory(string beneficiaryId) =>
+        _db.TransactionEvents.AsNoTracking().Where(e => e.BeneficiaryId == beneficiaryId).ToList()
+            .OrderBy(e => e.Timestamp).Select(ToDomain).ToList();
+
     private static TransactionEventEntity ToEntity(TransactionEvent e) => new()
     {
         TransactionId = e.TransactionId,
@@ -56,6 +64,36 @@ public sealed class EfTransactionEventStore : ITransactionEventStore
         e.TransactionId, e.CustomerId, e.MerchantId, e.Amount, e.Currency, e.Timestamp,
         e.DeviceId, e.IpAddress, e.Location, e.BeneficiaryId, e.BeneficiaryCreatedAt,
         e.WasRefunded, e.PriorFailedAttempts);
+}
+
+public sealed class EfInvestigationStateStore : IInvestigationStateStore
+{
+    private readonly AgentTrustDbContext _db;
+    private static readonly JsonSerializerOptions JsonOptions = new();
+    public EfInvestigationStateStore(AgentTrustDbContext db) => _db = db;
+
+    public void Save(InvestigationState state)
+    {
+        var existing = _db.InvestigationStates.Find(state.InvestigationId);
+        var entity = new InvestigationStateEntity
+        {
+            InvestigationId = state.InvestigationId,
+            TransactionId = state.TransactionId,
+            Status = state.Status.ToString(),
+            StateJson = JsonSerializer.Serialize(state, JsonOptions),
+            CreatedAt = state.CreatedAt,
+            UpdatedAt = state.UpdatedAt
+        };
+        if (existing is null) _db.InvestigationStates.Add(entity);
+        else _db.Entry(existing).CurrentValues.SetValues(entity);
+        _db.SaveChanges();
+    }
+
+    public InvestigationState? Find(string investigationId)
+    {
+        var entity = _db.InvestigationStates.AsNoTracking().FirstOrDefault(e => e.InvestigationId == investigationId);
+        return entity is null ? null : JsonSerializer.Deserialize<InvestigationState>(entity.StateJson, JsonOptions);
+    }
 }
 
 public sealed class EfProfileHistoryStore : IProfileHistoryStore
