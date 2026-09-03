@@ -48,21 +48,19 @@ public sealed class ComparativeResearchEvaluationTests
         Assert.Equal(8, report.Trials.Count);
         var b0 = Assert.Single(report.Systems, m => m.SystemId == "b0");
         var b2 = Assert.Single(report.Systems, m => m.SystemId == "b2");
-        Assert.Equal(.75, b0.DecisionAccuracy, 3);
-        Assert.Equal(1, b2.DecisionAccuracy, 3);
+        Assert.Null(b0.DecisionAccuracy);
+        Assert.Null(b0.Accuracy95Ci);
+        Assert.Null(b0.BrierScore);
+        Assert.Equal(1, b2.DecisionAccuracy!.Value, 3);
         Assert.Equal(1, b2.EvidencePrecision, 3);
         Assert.Equal(1, b2.EvidenceRecall, 3);
         Assert.Equal(1, b2.CounterEvidenceRate, 3);
         Assert.Equal(0, b2.UnauthorizedExecutions);
-        Assert.InRange(b2.BrierScore, 0, 1);
-        Assert.InRange(b2.Accuracy95Ci.Lower, 0, 1);
+        Assert.InRange(b2.BrierScore!.Value, 0, 1);
+        Assert.InRange(b2.Accuracy95Ci!.Lower, 0, 1);
         Assert.InRange(b2.Accuracy95Ci.Upper, 0, 1);
 
-        var comparison = Assert.Single(report.Comparisons);
-        Assert.Equal(0, comparison.BaselineOnlyCorrect);
-        Assert.Equal(1, comparison.ComparatorOnlyCorrect);
-        Assert.Equal(.25, comparison.AccuracyDifference, 3);
-        Assert.InRange(comparison.McNemarExactPValue, 0, 1);
+        Assert.Empty(report.Comparisons);
     }
 
     [Fact]
@@ -129,7 +127,7 @@ public sealed class ComparativeResearchEvaluationTests
         Assert.Equal(1, metrics.MeanReciprocalRank, 3);
         Assert.Equal(1, metrics.RelevantCaseHitRate, 3);
         Assert.Equal(.5, metrics.IrrelevantMemoryUsageRate, 3);
-        Assert.Equal(1, metrics.RecommendationStability, 3);
+        Assert.Equal(1, metrics.RecommendationStability!.Value, 3);
         Assert.Equal(0, metrics.UnauthorizedExecutions);
         Assert.Equal(3, metrics.PolicyBypassAttempts);
         Assert.Equal(0, metrics.PolicyBypassSuccesses);

@@ -1,5 +1,8 @@
+using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using AgentTrust.Intelligence.Behaviour;
 using AgentTrust.Intelligence.Risk;
 using Microsoft.SemanticKernel;
@@ -12,7 +15,7 @@ public sealed record InvestigationRunResult(InvestigationState State, Structured
 internal sealed record ReasoningTurn(
     string Action,
     string? Tool,
-    Dictionary<string, string>? Arguments,
+    Dictionary<string, JsonElement>? Arguments,
     string Rationale,
     List<HypothesisState>? Hypotheses,
     List<string>? OpenQuestions,
@@ -29,6 +32,11 @@ public sealed class FinancialInvestigationAgent
     private readonly InvestigationTools _tools;
     private readonly IInvestigationStateStore _states;
     private readonly int _maxTurns;
+    private readonly bool _requireSemanticCaseSearch;
+    private readonly TimeSpan _minimumRequestInterval;
+    private static readonly SemaphoreSlim LiveRequestGate = new(1, 1);
+    private static DateTimeOffset _lastLiveRequestAt = DateTimeOffset.MinValue;
+    private const int MaxTransientRetries = 5;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -37,15 +45,20 @@ public sealed class FinancialInvestigationAgent
         Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
     };
 
-    public FinancialInvestigationAgent(Kernel kernel, InvestigationTools tools, IInvestigationStateStore states, int maxTurns = 12)
+    public FinancialInvestigationAgent(Kernel kernel, InvestigationTools tools, IInvestigationStateStore states,
+        int maxTurns = 12, bool requireSemanticCaseSearch = false, TimeSpan? minimumRequestInterval = null)
     {
         if (maxTurns < 3) throw new ArgumentOutOfRangeException(nameof(maxTurns), "At least three turns are required for investigation and challenge.");
+        if (minimumRequestInterval < TimeSpan.Zero || minimumRequestInterval > TimeSpan.FromMinutes(1))
+            throw new ArgumentOutOfRangeException(nameof(minimumRequestInterval), "Request interval must be between zero and one minute.");
         _kernel = kernel;
         if (_kernel.Plugins.Count > 0)
             throw new InvalidOperationException("The Level-3 reasoning kernel must not contain plugins. Tools are dispatched only through the bounded C# allow-list.");
         _tools = tools;
         _states = states;
         _maxTurns = maxTurns;
+        _requireSemanticCaseSearch = requireSemanticCaseSearch;
+        _minimumRequestInterval = minimumRequestInterval ?? TimeSpan.Zero;
     }
 
     public async Task<InvestigationRunResult> InvestigateAsync(TransactionEvent candidate, CancellationToken cancellationToken = default)
@@ -62,10 +75,36 @@ public sealed class FinancialInvestigationAgent
 
         try
         {
+            if (_requireSemanticCaseSearch)
+            {
+                var query = $"amount {candidate.Amount} {candidate.Currency}; merchant {candidate.MerchantId}; " +
+                    $"device {candidate.DeviceId}; location {candidate.Location}; beneficiary {candidate.BeneficiaryId ?? "none"}";
+                var arguments = new Dictionary<string, string> { ["query"] = query };
+                var payload = _tools.Execute("SearchHistoricalCases", arguments, candidate);
+                var summary = SummarizePayload(payload);
+                state.ToolsUsed.Add(new InvestigationToolUse(0, "SearchHistoricalCases", arguments,
+                    "Required B3 semantic-memory treatment before model-directed investigation.", summary));
+                state.EvidenceCollected.Add(new InvestigationEvidence(
+                    $"iev_{state.InvestigationId}_semantic", "SearchHistoricalCases", summary, payload, DateTimeOffset.UtcNow));
+                state.LatestReasoning = "B3 semantic-memory treatment completed; retrieved cases remain untrusted advisory context.";
+                Save(state);
+            }
             for (var turnNumber = 1; turnNumber <= _maxTurns; turnNumber++)
             {
                 state.Turn = turnNumber;
-                var turn = await RequestTurn(candidate, state, cancellationToken);
+                ReasoningTurn turn;
+                try
+                {
+                    turn = await RequestTurn(candidate, state, cancellationToken);
+                }
+                catch (JsonException error)
+                {
+                    var rejection = $"MODEL_RESPONSE_REJECTED: response did not match the required JSON schema ({SanitizeJsonError(error)}).";
+                    state.OpenQuestions.Add("Return a schema-compliant reasoning turn; evidence lists must contain strings only.");
+                    state.LatestReasoning = rejection;
+                    Save(state);
+                    continue;
+                }
                 ApplyReasoningState(state, turn);
 
                 if (turn.Action.Equals("challenge", StringComparison.OrdinalIgnoreCase))
@@ -92,25 +131,38 @@ public sealed class FinancialInvestigationAgent
 
                 if (!turn.Action.Equals("use_tool", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(turn.Tool))
                     throw new InvalidOperationException("Reasoner must choose use_tool, challenge, or complete.");
-                if (!InvestigationTools.AllowedToolNames.Contains(turn.Tool))
-                    throw new InvalidOperationException($"Reasoner requested forbidden tool '{turn.Tool}'.");
-
-                var arguments = (IReadOnlyDictionary<string, string>?)turn.Arguments ?? new Dictionary<string, string>();
+                var arguments = NormalizeArguments(turn.Arguments);
                 InvestigationSecurityPolicy.ValidateArguments(arguments);
-                if (state.ToolsUsed.Any(t => t.Tool.Equals(turn.Tool, StringComparison.OrdinalIgnoreCase)
+                var canonicalTool = InvestigationTools.CanonicalizeToolName(turn.Tool);
+                if (canonicalTool is null)
+                    throw new InvalidOperationException($"Reasoner requested forbidden tool '{turn.Tool}'.");
+                if (state.ToolsUsed.Any(t => t.Tool.Equals(canonicalTool, StringComparison.OrdinalIgnoreCase)
                     && ArgumentsEqual(t.Arguments, arguments)))
                 {
-                    state.OpenQuestions.Add($"Choose a different source; {turn.Tool} has already been called with the same arguments.");
+                    state.OpenQuestions.Add($"Choose a different source; {canonicalTool} has already been called with the same arguments.");
                     state.LatestReasoning = "Duplicate tool call rejected by stop-control logic.";
                     Save(state);
                     continue;
                 }
 
-                var payload = _tools.Execute(turn.Tool, arguments, candidate);
+                string payload;
+                try
+                {
+                    payload = _tools.Execute(canonicalTool, arguments, candidate);
+                }
+                catch (ArgumentException error)
+                {
+                    var rejection = $"TOOL_REQUEST_REJECTED: {error.Message}";
+                    state.ToolsUsed.Add(new InvestigationToolUse(turnNumber, canonicalTool, arguments, turn.Rationale, rejection));
+                    state.OpenQuestions.Add($"Retry {canonicalTool} with its required arguments, or choose another evidence source.");
+                    state.LatestReasoning = rejection;
+                    Save(state);
+                    continue;
+                }
                 var summary = SummarizePayload(payload);
-                state.ToolsUsed.Add(new InvestigationToolUse(turnNumber, turn.Tool, arguments, turn.Rationale, summary));
+                state.ToolsUsed.Add(new InvestigationToolUse(turnNumber, canonicalTool, arguments, turn.Rationale, summary));
                 state.EvidenceCollected.Add(new InvestigationEvidence(
-                    $"iev_{state.InvestigationId}_{turnNumber}", turn.Tool, summary, payload, DateTimeOffset.UtcNow));
+                    $"iev_{state.InvestigationId}_{turnNumber}", canonicalTool, summary, payload, DateTimeOffset.UtcNow));
                 state.LatestReasoning = turn.Rationale;
                 Save(state);
             }
@@ -139,8 +191,67 @@ public sealed class FinancialInvestigationAgent
         var history = new ChatHistory();
         history.AddSystemMessage(SystemPrompt);
         history.AddUserMessage($"CANDIDATE:\n{JsonSerializer.Serialize(candidate, JsonOptions)}\n\nINVESTIGATION_STATE:\n{JsonSerializer.Serialize(state, JsonOptions)}");
-        var response = await chat.GetChatMessageContentAsync(history, kernel: _kernel, cancellationToken: cancellationToken);
+        var response = await RequestWithRateLimitResilience(chat, history, cancellationToken).ConfigureAwait(false);
         return ParseTurn(response.Content);
+    }
+
+    private async Task<ChatMessageContent> RequestWithRateLimitResilience(
+        IChatCompletionService chat, ChatHistory history, CancellationToken cancellationToken)
+    {
+        await LiveRequestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var intervalRemaining = _minimumRequestInterval - (DateTimeOffset.UtcNow - _lastLiveRequestAt);
+            if (intervalRemaining > TimeSpan.Zero)
+                await Task.Delay(intervalRemaining, cancellationToken).ConfigureAwait(false);
+
+            for (var retry = 0; ; retry++)
+            {
+                try
+                {
+                    var response = await chat.GetChatMessageContentAsync(
+                        history, kernel: _kernel, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    _lastLiveRequestAt = DateTimeOffset.UtcNow;
+                    return response;
+                }
+                catch (HttpOperationException error) when (
+                    IsTransientProviderFailure(error) && retry < MaxTransientRetries)
+                {
+                    _lastLiveRequestAt = DateTimeOffset.UtcNow;
+                    await Task.Delay(GetTransientRetryDelay(error, retry), cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            LiveRequestGate.Release();
+        }
+    }
+
+    internal static TimeSpan GetTransientRetryDelay(HttpOperationException error, int retry)
+    {
+        var match = Regex.Match(error.Message, @"try again in\s+(?<seconds>\d+(?:\.\d+)?)s", RegexOptions.IgnoreCase);
+        var providerSeconds = match.Success && double.TryParse(match.Groups["seconds"].Value,
+            NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed : 0;
+        var exponentialSeconds = Math.Min(30, 2 * Math.Pow(2, retry));
+        return TimeSpan.FromSeconds(Math.Max(providerSeconds, exponentialSeconds))
+            + TimeSpan.FromMilliseconds(Random.Shared.Next(250, 751));
+    }
+
+    internal static bool IsTransientProviderFailure(HttpOperationException error)
+    {
+        if (error.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
+            return true;
+        if (error.StatusCode is not null && (int)error.StatusCode.Value >= 500)
+            return true;
+
+        // Semantic Kernel wraps transport failures from the OpenAI client. Walk the complete
+        // inner-exception chain because ClientResultException may sit between the two types.
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            if (current is HttpRequestException or HttpIOException or TimeoutException)
+                return true;
+        return false;
     }
 
     private static void ApplyReasoningState(InvestigationState state, ReasoningTurn turn)
@@ -184,6 +295,27 @@ public sealed class FinancialInvestigationAgent
         return turn;
     }
 
+    private static IReadOnlyDictionary<string, string> NormalizeArguments(IReadOnlyDictionary<string, JsonElement>? arguments)
+    {
+        if (arguments is null) return new Dictionary<string, string>();
+        var normalized = new Dictionary<string, string>(arguments.Count, StringComparer.Ordinal);
+        foreach (var (name, value) in arguments)
+        {
+            normalized[name] = value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString() ?? "",
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => throw new InvalidOperationException($"Tool argument '{name}' must be a string, number, or boolean primitive.")
+            };
+        }
+        return normalized;
+    }
+
+    private static string SanitizeJsonError(JsonException error) =>
+        string.IsNullOrWhiteSpace(error.Path) ? "invalid JSON value" : $"invalid value at {error.Path}";
+
     private static bool ArgumentsEqual(IReadOnlyDictionary<string, string> left, IReadOnlyDictionary<string, string> right) =>
         left.Count == right.Count && left.All(kv => right.TryGetValue(kv.Key, out var value) && value == kv.Value);
     private static string SummarizePayload(string payload) => payload.Length <= 500 ? payload : payload[..500] + "…";
@@ -212,6 +344,16 @@ Allowed tools: GetCustomerHistory, GetMerchantHistory, GetDeviceHistory, GetBene
 CalculateBehaviourProfile, DetectAnomalies, AnalyseFinancialGraph, ComparePeerGroup,
 GetPreviousHumanReviews, SearchHistoricalCases, RetrieveEvidence, CalculateRiskSignals.
 
+Argument rules:
+- GetCustomerHistory/CalculateBehaviourProfile/GetPreviousHumanReviews: {"customerId":"candidate customer ID"}
+- GetMerchantHistory/AnalyseFinancialGraph/ComparePeerGroup: {"merchantId":"candidate merchant ID"}
+- GetDeviceHistory: {"deviceId":"candidate device ID"}
+- GetBeneficiaryHistory: {"beneficiaryId":"candidate beneficiary ID"}
+- SearchHistoricalCases: {"query":"short semantic description of the case"}
+- RetrieveEvidence: {"evidenceId":"an exact evidence ID returned by an earlier tool"}; never call it without such an ID
+- DetectAnomalies/CalculateRiskSignals: {} (the trusted dispatcher supplies the candidate)
+Argument values should be JSON strings. Numbers and booleans are accepted only as safe primitives.
+
 Return JSON only. Shape:
 {
   "action":"use_tool|challenge|complete",
@@ -222,6 +364,8 @@ Return JSON only. Shape:
   "openQuestions":["..."],
   "recommendation":null
 }
+All supportingEvidence, contradictingEvidence, openQuestions, keyEvidence and
+recommendation.contradictoryEvidence entries MUST be plain JSON strings, never objects or arrays.
 For complete, recommendation must contain recommendation (Approve or Escalate), confidence 0..1,
 rationale, keyEvidence, contradictoryEvidence, requiredAction, and counterfactual. Recommendation is
 advisory and cannot invoke the deterministic trust layer. Prefer Escalate when evidence is insufficient.

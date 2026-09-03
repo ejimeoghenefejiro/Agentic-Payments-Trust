@@ -16,6 +16,7 @@ public sealed class InvestigationTools
         "CalculateBehaviourProfile", "DetectAnomalies", "AnalyseFinancialGraph", "ComparePeerGroup",
         "GetPreviousHumanReviews", "SearchHistoricalCases", "RetrieveEvidence", "CalculateRiskSignals"
     };
+    private static readonly IReadOnlyDictionary<string, string> CanonicalToolNames = BuildCanonicalToolNames();
 
     private readonly ITransactionEventStore _events;
     private readonly TransactionRiskEngine _riskEngine;
@@ -32,7 +33,9 @@ public sealed class InvestigationTools
     public string Execute(string tool, IReadOnlyDictionary<string, string> arguments, TransactionEvent candidate)
     {
         InvestigationSecurityPolicy.ValidateArguments(arguments);
-        var raw = tool switch
+        var canonicalTool = CanonicalizeToolName(tool)
+            ?? throw new InvalidOperationException($"Tool '{tool}' is not on the Level-3 investigation allow-list.");
+        var raw = canonicalTool switch
         {
             "GetCustomerHistory" => GetCustomerHistory(ScopedArg(arguments, "customerId", candidate.CustomerId)),
             "GetMerchantHistory" => GetMerchantHistory(ScopedArg(arguments, "merchantId", candidate.MerchantId)),
@@ -48,7 +51,19 @@ public sealed class InvestigationTools
             "CalculateRiskSignals" => CalculateRiskSignals(JsonSerializer.Serialize(candidate, JsonOptions)),
             _ => throw new InvalidOperationException($"Tool '{tool}' is not on the Level-3 investigation allow-list.")
         };
-        return Json(new { Classification = "UNTRUSTED_TOOL_OUTPUT", SourceTool = tool, Payload = JsonDocument.Parse(raw).RootElement.Clone() });
+        return Json(new { Classification = "UNTRUSTED_TOOL_OUTPUT", SourceTool = canonicalTool, Payload = JsonDocument.Parse(raw).RootElement.Clone() });
+    }
+
+    /// <summary>Maps harmless spelling/casing variants to one audited allow-list identity.</summary>
+    public static string? CanonicalizeToolName(string? tool) =>
+        !string.IsNullOrWhiteSpace(tool) && CanonicalToolNames.TryGetValue(tool.Trim(), out var canonical)
+            ? canonical : null;
+
+    private static IReadOnlyDictionary<string, string> BuildCanonicalToolNames()
+    {
+        var names = AllowedToolNames.ToDictionary(name => name, name => name, StringComparer.OrdinalIgnoreCase);
+        names["AnalyzeFinancialGraph"] = "AnalyseFinancialGraph";
+        return names;
     }
 
     [KernelFunction("get_customer_history")]

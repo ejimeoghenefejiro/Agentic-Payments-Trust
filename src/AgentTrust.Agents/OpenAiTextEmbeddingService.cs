@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using AgentTrust.Intelligence.Investigation;
 
-namespace AgentTrust.Api;
+namespace AgentTrust.Agents;
 
 public sealed class OpenAiTextEmbeddingService : ITextEmbeddingService
 {

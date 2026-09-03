@@ -67,7 +67,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         using var scope = semanticFactory.Services.CreateScope();
 
         Assert.IsType<SemanticInvestigationMemory>(scope.ServiceProvider.GetRequiredService<IInvestigationMemory>());
-        var embeddings = Assert.IsType<AgentTrust.Api.OpenAiTextEmbeddingService>(scope.ServiceProvider.GetRequiredService<ITextEmbeddingService>());
+        var embeddings = Assert.IsType<AgentTrust.Agents.OpenAiTextEmbeddingService>(scope.ServiceProvider.GetRequiredService<ITextEmbeddingService>());
         Assert.Equal("test-embedding-model", embeddings.Model);
     }
 

@@ -64,6 +64,31 @@ public sealed class TrustFramework
 
     public sealed record Outcome(PolicyDecisionResult PolicyDecision, PaymentResult PaymentResult, AuditRecord Audit, long LatencyMs);
 
+    /// <summary>Evaluates and audits a proposal without executing a payment. Commerce uses this
+    /// path to obtain a deterministic decision before issuing a separately bound purchase
+    /// authorisation. This prevents policy approval from becoming an accidental double charge.</summary>
+    public Outcome EvaluateTransaction(TransactionIntent intent, EvidenceManifest evidenceManifest,
+        DelegatedAuthority? transactionScopedAuthority = null)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _intentStore.Save(intent);
+        _evidenceManifestStore.Save(evidenceManifest);
+        var policyDecision = _policyEngine.Evaluate(intent, evidenceManifest, transactionScopedAuthority);
+        _policyDecisionStore.Save(policyDecision);
+        _ledger.Record(intent, policyDecision.Decision);
+        var paymentResult = new PaymentResult(intent.TransactionId, PaymentStatus.NotAttempted, string.Empty, null);
+        _paymentOutcomeStore.Save(paymentResult);
+        if (policyDecision.Decision == Decision.Escalate)
+            _approvalStore.Save(new ApprovalRequest(Guid.NewGuid().ToString("N"), intent.TransactionId,
+                ApprovalStatus.Pending, DateTimeOffset.UtcNow, Decision.Escalate, null, null, null, null));
+        var authorityId = transactionScopedAuthority?.AuthorityId ?? _authorities.FindByAgent(intent.AgentId)?.AuthorityId ?? "unknown";
+        var audit = _evidenceService.BuildAuditRecord(intent, authorityId, evidenceManifest,
+            policyDecision, paymentResult, DateTimeOffset.UtcNow);
+        _auditLedger.Append(audit);
+        stopwatch.Stop();
+        return new Outcome(policyDecision, paymentResult, audit, stopwatch.ElapsedMilliseconds);
+    }
+
     public Outcome ProcessTransaction(TransactionIntent intent, EvidenceManifest evidenceManifest,
         DelegatedAuthority? transactionScopedAuthority = null)
     {

@@ -13,6 +13,9 @@
     <ProjectReference Include="..\AgentTrust.Mandates\AgentTrust.Mandates.csproj" />
     <ProjectReference Include="..\AgentTrust.Tasks\AgentTrust.Tasks.csproj" />
     <ProjectReference Include="..\AgentTrust.Scheduling\AgentTrust.Scheduling.csproj" />
+    <ProjectReference Include="..\AgentTrust.Consumer\AgentTrust.Consumer.csproj" />
+    <ProjectReference Include="..\AgentTrust.Commerce\AgentTrust.Commerce.csproj" />
+    <ProjectReference Include="..\AgentTrust.Connectors\AgentTrust.Connectors.csproj" />
     <ProjectReference Include="..\AgentTrust.Data.Migrations.SqlServer\AgentTrust.Data.Migrations.SqlServer.csproj" />
   </ItemGroup>
 

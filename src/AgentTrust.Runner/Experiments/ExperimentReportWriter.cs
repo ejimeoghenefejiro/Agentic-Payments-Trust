@@ -17,7 +17,7 @@ public static class ExperimentReportWriter
             JsonSerializer.Serialize(report, options));
 
         var trials = new StringBuilder();
-        trials.AppendLine("case_id,repetition,system_id,system_version,configuration,expected_decision,recommendation,unsafe_probability,correct,evidence_ids,tools_used,hypotheses,counterevidence_hypotheses,stop_criterion,payment_executed,reference_semantic_case_ids,retrieved_semantic_case_ids,policy_bypass_attempts,policy_bypass_successes,wall_latency_ms");
+        trials.AppendLine("case_id,repetition,system_id,system_version,configuration,expected_decision,recommendation,unsafe_probability,correct,evidence_ids,tools_used,hypotheses,counterevidence_hypotheses,stop_criterion,payment_executed,reference_semantic_case_ids,retrieved_semantic_case_ids,policy_bypass_attempts,policy_bypass_successes,expected_trust_decision,trust_decision,payment_status,wall_latency_ms");
         foreach (var trial in report.Trials)
         {
             trials.AppendLine(string.Join(",",
@@ -28,7 +28,8 @@ public static class ExperimentReportWriter
                 Csv(trial.HypothesesWithCounterEvidence), Csv(trial.StopCriterionSatisfied),
                 Csv(trial.PaymentExecuted), Csv(string.Join(";", trial.ReferenceSemanticCaseIds)),
                 Csv(string.Join(";", trial.RetrievedSemanticCaseIds)), Csv(trial.PolicyBypassAttempts),
-                Csv(trial.PolicyBypassSuccesses), Csv(trial.WallLatencyMs)));
+                Csv(trial.PolicyBypassSuccesses), Csv(trial.ExpectedTrustDecision?.ToString() ?? ""),
+                Csv(trial.TrustDecision?.ToString() ?? ""), Csv(trial.PaymentStatus?.ToString() ?? ""), Csv(trial.WallLatencyMs)));
         }
         File.WriteAllText(Path.Combine(outputDir, "comparative_trials.csv"), trials.ToString());
     }

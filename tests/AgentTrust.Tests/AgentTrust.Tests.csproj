@@ -34,6 +34,9 @@
     <ProjectReference Include="..\..\src\AgentTrust.Mandates\AgentTrust.Mandates.csproj" />
     <ProjectReference Include="..\..\src\AgentTrust.Tasks\AgentTrust.Tasks.csproj" />
     <ProjectReference Include="..\..\src\AgentTrust.Scheduling\AgentTrust.Scheduling.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Consumer\AgentTrust.Consumer.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Commerce\AgentTrust.Commerce.csproj" />
+    <ProjectReference Include="..\..\src\AgentTrust.Connectors\AgentTrust.Connectors.csproj" />
   </ItemGroup>
 
 </Project>

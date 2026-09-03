@@ -1,5 +1,4 @@
 using AgentTrust.Agents;
-using AgentTrust.Api;
 using AgentTrust.Core;
 using AgentTrust.Data;
 using AgentTrust.Evidence;
@@ -10,12 +9,20 @@ using AgentTrust.Intelligence.Learning;
 using AgentTrust.Intelligence.Risk;
 using AgentTrust.Orchestration;
 using AgentTrust.Payments;
+using AgentTrust.Commerce;
+using AgentTrust.Connectors;
+using AgentTrust.Consumer;
+using AgentTrust.Mandates;
+using AgentTrust.PaymentMethods;
+using AgentTrust.Scheduling;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddAuthentication();
+builder.Services.AddAuthorization();
 
 // OpenAI key/model: secret configuration ("OpenAI:ApiKey"/"OpenAI:Model") takes priority over
 // OPENAI_API_KEY/OPENAI_MODEL. Credentials must not be stored in appsettings files.
@@ -94,6 +101,41 @@ else
 builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
 builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>();
 
+// Consumer commerce pilot. Stores remain in-memory until the dedicated consumer schema migration
+// is enabled; no raw payment credentials or retailer passwords are accepted by these services.
+builder.Services.AddSingleton<IConsumerTaskStore, InMemoryConsumerTaskStore>();
+builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
+builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
+builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();
+builder.Services.AddSingleton<IMandateUsageTracker, InMemoryMandateUsageTracker>();
+builder.Services.AddSingleton<IOneOffAuthorisationStore, InMemoryOneOffAuthorisationStore>();
+builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
+builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
+builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
+builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
+    builder.Configuration.GetValue("LivePurchase:Enabled", false),
+    builder.Configuration.GetValue("LivePurchase:MaxPilotAmountGbp", 5m),
+    builder.Configuration.GetSection("LivePurchase:AllowedPrincipalIds").Get<string[]>()?.ToHashSet() ?? [],
+    builder.Configuration.GetSection("LivePurchase:AllowedMerchantIds").Get<string[]>()?.ToHashSet() ?? [],
+    builder.Configuration.GetValue("LivePurchase:RequireExplicitLiveConfirmation", true))));
+builder.Services.AddSingleton<IPurchaseAuthorisationService>(_ =>
+{
+    var encoded = Environment.GetEnvironmentVariable("PURCHASE_AUTHORISATION_KEY");
+    if (!string.IsNullOrWhiteSpace(encoded)) return new HmacPurchaseAuthorisationService(Convert.FromBase64String(encoded));
+    if (!builder.Environment.IsDevelopment()) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development.");
+    return new HmacPurchaseAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+});
+builder.Services.AddSingleton<IPlatformPaymentProcessor>(sp =>
+{
+    var provider = builder.Configuration["Payments:Provider"] ?? "Mock";
+    if (!provider.Equals("Stripe", StringComparison.OrdinalIgnoreCase)) return new MockPlatformPaymentProcessor();
+    var mode = Enum.Parse<StripePaymentMode>(builder.Configuration["Payments:Mode"] ?? "Test", true);
+    return new StripePaymentAdapter(builder.Configuration["Stripe:SecretKey"]
+        ?? Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY") ?? "",
+        new StripePaymentOptions(mode), sp.GetRequiredService<IPaymentMethodStore>());
+});
+builder.Services.AddSingleton<DemoGroceryConnector>();
+
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext
 // when a database is configured; singleton in-memory otherwise). Feedback follows the same rule.
@@ -162,6 +204,8 @@ builder.Services.AddScoped<TrustFramework>(sp => new TrustFramework(
     sp.GetRequiredService<IApprovalStore>(),
     sp.GetRequiredService<IAuditRecordStore>(),
     sp.GetRequiredService<IPaymentAttemptStore>()));
+builder.Services.AddScoped<AgentPurchaseOrchestrator>();
+builder.Services.AddScoped<ConsumerPurchaseScheduler>();
 
 var app = builder.Build();
 
@@ -180,6 +224,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.Run();

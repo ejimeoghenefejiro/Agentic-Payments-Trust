@@ -22,6 +22,10 @@
     <ProjectReference Include="..\AgentTrust.Orchestration\AgentTrust.Orchestration.csproj" />
     <ProjectReference Include="..\AgentTrust.Data\AgentTrust.Data.csproj" />
     <ProjectReference Include="..\AgentTrust.Intelligence\AgentTrust.Intelligence.csproj" />
+    <ProjectReference Include="..\AgentTrust.Consumer\AgentTrust.Consumer.csproj" />
+    <ProjectReference Include="..\AgentTrust.Commerce\AgentTrust.Commerce.csproj" />
+    <ProjectReference Include="..\AgentTrust.Connectors\AgentTrust.Connectors.csproj" />
+    <ProjectReference Include="..\AgentTrust.Scheduling\AgentTrust.Scheduling.csproj" />
     <ProjectReference Include="..\AgentTrust.Data.Migrations.SqlServer\AgentTrust.Data.Migrations.SqlServer.csproj" />
     <ProjectReference Include="..\AgentTrust.Data.Migrations.Postgres\AgentTrust.Data.Migrations.Postgres.csproj" />
   </ItemGroup>

@@ -41,6 +41,18 @@ if (args.Contains("--cross-model"))
     return;
 }
 
+if (args.Contains("--live-b2-b3"))
+{
+    await RunLiveB2B3(args, repoRoot, resultsDir);
+    return;
+}
+
+if (args.Contains("--consumer-purchase-demo"))
+{
+    await ConsumerPurchaseDemo.RunAsync(repoRoot);
+    return;
+}
+
 if (args.Contains("--research-eval"))
 {
     RunResearchEvaluation(args, resultsDir);
@@ -48,6 +60,60 @@ if (args.Contains("--research-eval"))
 }
 
 await RunScenarioSuite(scenariosDir, resultsDir);
+
+static async Task RunLiveB2B3(string[] args, string repoRoot, string resultsDir)
+{
+    var developmentSettings = Path.Combine(repoRoot, "src", "AgentTrust.Api", "appsettings.Development.json");
+    string? configuredKey = null;
+    string? configuredModel = null;
+    if (File.Exists(developmentSettings))
+    {
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(developmentSettings));
+        if (document.RootElement.TryGetProperty("OpenAI", out var openAi))
+        {
+            if (openAi.TryGetProperty("ApiKey", out var key)) configuredKey = key.GetString();
+            if (openAi.TryGetProperty("Model", out var model)) configuredModel = model.GetString();
+        }
+    }
+    var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? configuredKey;
+    if (string.IsNullOrWhiteSpace(apiKey))
+        throw new InvalidOperationException("Set OPENAI_API_KEY or the ignored development setting before running the live experiment.");
+    var chatModel = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? configuredModel ?? "gpt-4o-mini";
+    var embeddingModel = Environment.GetEnvironmentVariable("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small";
+    var embeddingDimensions = GetIntArg(args, "--embedding-dimensions", 1536);
+    var repetitions = GetIntArg(args, "--repetitions", 5);
+    var requestDelayMs = GetIntArg(args, "--request-delay-ms", 4500);
+    if (requestDelayMs is < 0 or > 60_000)
+        throw new ArgumentOutOfRangeException(nameof(requestDelayMs), "--request-delay-ms must be between 0 and 60000.");
+
+    Console.WriteLine($"Running live paired B2/B3 experiment: model={chatModel}, embedding={embeddingModel}, repetitions={repetitions}, requestDelay={requestDelayMs}ms...");
+    ComparativeResearchReport report;
+    try
+    {
+        report = await LiveB2B3Experiment.RunAsync(repoRoot, apiKey, chatModel, embeddingModel,
+            embeddingDimensions, repetitions, requestDelayMs);
+    }
+    catch (HttpRequestException error)
+    {
+        Console.Error.WriteLine($"Live B2/B3 experiment could not reach the configured provider: {error.Message}");
+        Environment.ExitCode = 2;
+        return;
+    }
+    var outputDir = Path.Combine(resultsDir, "experiments", report.Protocol.StudyId);
+    ExperimentReportWriter.WriteComparative(outputDir, report);
+    foreach (var metrics in report.Systems)
+    {
+        var recommendationAccuracy = metrics.DecisionAccuracy is null ? "N/A" : metrics.DecisionAccuracy.Value.ToString("P1");
+        Console.WriteLine($"{metrics.SystemId}: recommendationAccuracy={recommendationAccuracy}, trustAccuracy={metrics.TrustDecisionAccuracy:P1}, evidenceF1={metrics.EvidenceF1:F3}, retrievalF1={F1(metrics.SemanticRetrievalPrecision, metrics.SemanticRetrievalRecall):F3}, MRR={metrics.MeanReciprocalRank:F3}, tools={metrics.MeanToolCalls:F1}, p95={metrics.P95LatencyMs:F0}ms, payments={metrics.PaymentExecutions}, unauthorized={metrics.UnauthorizedExecutions}, bypass={metrics.PolicyBypassSuccesses}/{metrics.PolicyBypassAttempts}");
+    }
+    Console.WriteLine("Trust-boundary diagnostics (B0):");
+    Console.WriteLine($"{"Case",-24} {"Expected",-10} {"Actual",-10} {"Payment",-14} Match");
+    foreach (var trial in report.Trials.Where(trial => trial.Configuration == ResearchConfiguration.B0DeterministicTrust))
+        Console.WriteLine($"{trial.CaseId,-24} {trial.ExpectedTrustDecision,-10} {trial.TrustDecision,-10} {trial.PaymentStatus,-14} {trial.ExpectedTrustDecision == trial.TrustDecision}");
+    Console.WriteLine($"Results written to {outputDir}");
+}
+
+static double F1(double precision, double recall) => precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
 
 static void RunResearchEvaluation(string[] args, string resultsDir)
 {

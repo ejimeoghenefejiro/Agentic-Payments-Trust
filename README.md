@@ -160,10 +160,13 @@ Model and intelligence behaviour may vary across B1–B4, while the deterministi
 Each run records a study ID, dataset/version, fixed seed, policy version, UTC start time and
 optional model/version. Per-case trials retain the expected and recommended decisions, unsafe
 probability, reference and retrieved evidence, tools selected, hypothesis/counter-evidence
-coverage, stop-criterion result, payment-execution observation and wall latency. The report adds
-decision accuracy with a 95% Wilson interval, unsafe precision/recall/F1, Brier score, expected
+coverage, stop-criterion result, payment-execution observation and wall latency. For recommendation-capable
+systems, the report adds decision accuracy with a 95% Wilson interval, unsafe precision/recall/F1, Brier score, expected
 calibration error, evidence precision/recall/F1, counter-evidence and stopping rates, tool use,
-latency percentiles, unauthorised executions, and paired exact McNemar comparisons against B0.
+latency percentiles, unauthorised executions, and paired exact McNemar comparisons. B0 has no Level 3
+recommendation capability, so its recommendation and calibration metrics are reported as `N/A` and
+it is excluded from recommendation-accuracy comparisons; it remains the baseline for trust accuracy,
+policy enforcement, payment outcomes, latency, unauthorised execution, and bypass resistance.
 `ExperimentReportWriter.WriteComparative` exports the complete protocol, trials, metrics and
 paired comparisons as indented JSON plus a per-case CSV suitable for R, Python or archival.
 
@@ -265,9 +268,23 @@ retrieved but remains `UNTRUSTED_TOOL_OUTPUT` with no policy, authority or payme
 without semantic treatment, and B3 with semantic memory. Every arm receives the same cases for
 each configured repetition. Reports now include repetition IDs, semantic precision/recall,
 Recall@K, mean reciprocal rank, relevant-case hit rate, irrelevant-memory usage, recommendation
-stability, existing reasoning/outcome/calibration/latency measures, all pairwise comparisons, and
+stability, existing reasoning/outcome/calibration/latency measures, pairwise comparisons between
+recommendation-capable systems, and
 unauthorised executions. JSON and CSV exports retain the full protocol and per-trial retrieval IDs.
 B3 is an intelligence treatment only; deterministic payment authority is unchanged.
+
+Run the live paired treatment from a network-enabled terminal (the default is the low-cost
+one-repetition development run):
+
+```bash
+dotnet run --project src/AgentTrust.Runner -- --live-b2-b3 --repetitions 1
+```
+
+The command reads the ignored development credential or `OPENAI_API_KEY`, uses the configured chat
+model plus `text-embedding-3-small`, ingests the controlled corpus, runs identical cases through
+B2 and B3, and writes `comparative_report.json` and `comparative_trials.csv` under
+`results/experiments/live-b2-b3-*`. The research default is five repetitions; pass
+`--repetitions 1` only for a lower-cost smoke test.
 
 The feedback pipeline now records investigation linkage, agent/human confidence, reason codes,
 useful and misleading evidence, outcome source, and validation provenance. New feedback is
@@ -282,6 +299,61 @@ C#/.NET reference implementation of the trust and authorisation layer described 
 `Trustworthy_Agentic_Payments_PhD_Standalone.docx.pdf`: agent identity, principal binding,
 delegated financial authority, deterministic policy enforcement, evidence provenance, audit
 reconstruction, and a human-approval workflow for autonomous financial agents.
+
+## Consumer live-purchase pilot
+
+The consumer pilot preserves a strict three-stage boundary:
+
+```text
+consumer task -> AgentPurchaseOrchestrator proposes PurchaseIntent
+              -> deterministic mandate + TrustFramework evaluation
+              -> HMAC-bound PurchaseAuthorisation -> commerce connector checkout
+```
+
+`AgentTrust.Consumer` owns consumer tasks, connected-service references and purchase execution
+state. `AgentTrust.Commerce` contains typed product/basket/quote capabilities, canonical purchase
+intents, the signed authorisation service, live-pilot gate, purchase scheduler and orchestrator.
+`AgentTrust.Connectors` contains the controlled `DemoGroceryConnector`, an idempotent mock platform
+payment processor and the official-SDK `StripePaymentAdapter`. None of these projects is referenced
+by `AgentTrust.Intelligence`.
+
+The connector verifies that the authorisation signature, intent hash, principal, agent, mandate,
+merchant, amount, currency and expiry all match before checkout. Mutating the basket, delivery,
+payment method, merchant or amount after approval invalidates checkout. Task occurrence identity is
+`TaskId + ScheduledFor`; purchase/payment idempotency uses the stable derived purchase intent ID.
+Provider timeouts become `Unknown`, and `RequiresAction` is retained for SCA/3DS rather than being
+treated as success or bypassed.
+
+The API exposes authenticated, owner-scoped routes under `/api/consumer` for tasks, tokenised
+payment-method setup, runs, purchase history and one-off approve/reject. A host authentication
+scheme must supply the authenticated principal as the `NameIdentifier` claim; the repository does
+not include a development backdoor authentication scheme.
+
+Safe defaults in `appsettings.json` keep mock payments enabled and live purchase disabled. Stripe
+test mode requires environment configuration only:
+
+```powershell
+$env:STRIPE_SECRET_KEY = "sk_test_..."
+$env:PURCHASE_AUTHORISATION_KEY = "<base64 encoded 32+ random bytes>"
+```
+
+```json
+{
+  "Payments": { "Provider": "Stripe", "Mode": "Test" },
+  "LivePurchase": {
+    "Enabled": false,
+    "MaxPilotAmountGbp": 5,
+    "AllowedPrincipalIds": [],
+    "AllowedMerchantIds": [],
+    "RequireExplicitLiveConfirmation": true
+  }
+}
+```
+
+Live mode additionally requires an `sk_live_` key, enabling the gate, principal and merchant
+allow-list membership, an active owned mandate and tokenised payment method, amount at or below the
+pilot cap, deterministic approval, and explicit confirmation. Stripe is used only for platform
+merchant payment; an external merchant connector remains responsible for its own checkout.
 
 The central design principle, enforced end-to-end: **the agent proposes, the trust layer
 authorises.** A Semantic Kernel agent turns a natural-language instruction plus evidence into
@@ -363,9 +435,44 @@ docker-compose.yml           Api + PostgreSQL + Runner (see below)
 
 ## Running
 
+### Stripe test purchase vertical slice
+
+The first product demo exercises one guarded path end to end:
+
+```text
+weekly grocery task -> basket and quote -> deterministic trust decision
+                    -> intent-bound purchase authorisation -> Stripe test PaymentIntent
+                    -> receipt -> verified purchase audit trail
+```
+
+Put only rotated test credentials in the gitignored
+`src/AgentTrust.Api/appsettings.Development.json`:
+
+```json
+{
+  "Payments": { "Provider": "Stripe", "Mode": "Test" },
+  "Stripe": {
+    "PublishableKey": "pk_test_REPLACE_ME",
+    "SecretKey": "sk_test_REPLACE_ME",
+    "TestPaymentMethodId": "pm_card_visa"
+  }
+}
+```
+
+Then run:
+
+```powershell
+dotnet run --project src\AgentTrust.Runner -- --consumer-purchase-demo
+```
+
+The runner is test-mode only, explicitly confirms the pilot execution, allowlists the demo
+principal and merchant, caps the purchase at GBP 5, and exits with an error unless the basket,
+trust approval, Stripe PaymentIntent, receipt, and all required audit events are present. Never
+put Stripe credentials in `appsettings.json`, source code, logs, or a commit.
+
 ```bash
 dotnet build
-dotnet test                                  # 150 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
+dotnet test                                  # 155 tests: unit + persistence + API + scenarios + adversarial and comparative research tests
 dotnet run --project src/AgentTrust.Runner   # runs all 19 scenarios, prints pass/fail, writes results/*.json
 ```
 
@@ -1037,9 +1144,14 @@ After that, `Migrate()` sees `InitialCreate` as already applied and only runs fu
 - Store interfaces (`IAgentRegistry`, etc.) are synchronous; the EF-Core implementations call
   EF Core's sync APIs rather than being async end-to-end. Fine for this prototype's throughput,
   worth revisiting before any real load.
-- No authentication/authorization on the API itself (no API keys, no auth middleware) — anyone
-  who can reach it can call every endpoint. Out of scope for the trust-layer research question,
-  but a real deployment needs it.
+- Consumer endpoints require authorization and enforce ownership from the authenticated
+  `NameIdentifier`, but the repository deliberately ships no permissive default authentication
+  handler. A deployment must configure its real OIDC/JWT identity provider before those routes
+  become usable.
+- Consumer task, connection, purchase-execution, authorisation and lifecycle-audit stores are
+  currently process-local for the controlled pilot. Durable EF mappings, provider-specific
+  migrations, transactionally coupled reservation/checkout state, webhook reconciliation and a
+  distributed idempotency store remain mandatory before a genuine live-money pilot.
 - The cross-model harness's "degraded" profile is a hand-authored scripted variant, not a
   second real model — meaningful multi-model comparison needs a second live connector
   (Azure OpenAI, Anthropic via an OpenAI-compatible shim, etc.) configured through

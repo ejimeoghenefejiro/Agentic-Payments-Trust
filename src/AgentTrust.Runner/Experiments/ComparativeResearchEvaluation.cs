@@ -46,7 +46,8 @@ public sealed record ResearchCase(
     Decision ExpectedDecision,
     IReadOnlySet<string> ReferenceEvidenceIds,
     object Input,
-    IReadOnlyList<string>? ReferenceSemanticCaseIds = null)
+    IReadOnlyList<string>? ReferenceSemanticCaseIds = null,
+    Decision? ExpectedTrustDecision = null)
 {
     public void Validate()
     {
@@ -72,7 +73,9 @@ public sealed record ResearchObservation(
     bool PaymentExecuted = false,
     IReadOnlyList<string>? RetrievedSemanticCaseIds = null,
     int PolicyBypassAttempts = 0,
-    int PolicyBypassSuccesses = 0)
+    int PolicyBypassSuccesses = 0,
+    Decision? TrustDecision = null,
+    PaymentStatus? PaymentStatus = null)
 {
     public void Validate()
     {
@@ -146,6 +149,9 @@ public sealed record ResearchTrialResult(
     IReadOnlyList<string> RetrievedSemanticCaseIds,
     int PolicyBypassAttempts,
     int PolicyBypassSuccesses,
+    Decision? ExpectedTrustDecision,
+    Decision? TrustDecision,
+    PaymentStatus? PaymentStatus,
     double WallLatencyMs)
 {
     public bool Correct => ExpectedDecision == Recommendation;
@@ -160,13 +166,13 @@ public sealed record SystemResearchMetrics(
     string SystemVersion,
     ResearchConfiguration Configuration,
     int CaseCount,
-    double DecisionAccuracy,
-    ConfidenceInterval Accuracy95Ci,
-    double UnsafePrecision,
-    double UnsafeRecall,
-    double UnsafeF1,
-    double BrierScore,
-    double ExpectedCalibrationError,
+    double? DecisionAccuracy,
+    ConfidenceInterval? Accuracy95Ci,
+    double? UnsafePrecision,
+    double? UnsafeRecall,
+    double? UnsafeF1,
+    double? BrierScore,
+    double? ExpectedCalibrationError,
     double EvidencePrecision,
     double EvidenceRecall,
     double EvidenceF1,
@@ -182,9 +188,11 @@ public sealed record SystemResearchMetrics(
     double MeanReciprocalRank,
     double RelevantCaseHitRate,
     double IrrelevantMemoryUsageRate,
-    double RecommendationStability,
+    double? RecommendationStability,
     int PolicyBypassAttempts,
-    int PolicyBypassSuccesses);
+    int PolicyBypassSuccesses,
+    double TrustDecisionAccuracy,
+    int PaymentExecutions);
 
 public sealed record PairedComparison(
     string BaselineSystemId,
@@ -248,15 +256,18 @@ public static class ComparativeResearchEvaluator
                 observation.StopCriterionSatisfied, observation.PaymentExecuted,
                 researchCase.ReferenceSemanticCaseIds ?? [], observation.RetrievedSemanticCaseIds ?? [],
                 observation.PolicyBypassAttempts, observation.PolicyBypassSuccesses,
+                researchCase.ExpectedTrustDecision, observation.TrustDecision, observation.PaymentStatus,
                 stopwatch.Elapsed.TotalMilliseconds));
         }
 
         var metrics = systems.Select(s => CalculateSystemMetrics(
             s, trials.Where(t => t.SystemId == s.SystemId).ToList())).ToList();
         var comparisons = new List<PairedComparison>();
-        for (var left = 0; left < systems.Count - 1; left++)
-        for (var right = left + 1; right < systems.Count; right++)
-            comparisons.Add(Compare(systems[left].SystemId, systems[right].SystemId, trials));
+        var recommendationSystems = systems
+            .Where(system => system.Configuration != ResearchConfiguration.B0DeterministicTrust).ToList();
+        for (var left = 0; left < recommendationSystems.Count - 1; left++)
+        for (var right = left + 1; right < recommendationSystems.Count; right++)
+            comparisons.Add(Compare(recommendationSystems[left].SystemId, recommendationSystems[right].SystemId, trials));
         return new ComparativeResearchReport(protocol, trials, metrics, comparisons);
     }
 
@@ -288,22 +299,31 @@ public static class ComparativeResearchEvaluator
             return rank < 0 ? 0d : 1d / (rank + 1);
         }).ToList();
 
+        var supportsRecommendations = system.Configuration != ResearchConfiguration.B0DeterministicTrust;
         return new SystemResearchMetrics(
-            system.SystemId, system.Version, system.Configuration, n, Divide(correct, n),
-            Wilson(correct, n), precision, recall, F1(precision, recall),
-            trials.Average(t => Math.Pow(t.UnsafeProbability - (t.ExpectedUnsafe ? 1 : 0), 2)),
-            ExpectedCalibrationError(trials, 10), evidencePrecision, evidenceRecall,
+            system.SystemId, system.Version, system.Configuration, n,
+            supportsRecommendations ? Divide(correct, n) : null,
+            supportsRecommendations ? Wilson(correct, n) : null,
+            supportsRecommendations ? precision : null,
+            supportsRecommendations ? recall : null,
+            supportsRecommendations ? F1(precision, recall) : null,
+            supportsRecommendations ? trials.Average(t => Math.Pow(t.UnsafeProbability - (t.ExpectedUnsafe ? 1 : 0), 2)) : null,
+            supportsRecommendations ? ExpectedCalibrationError(trials, 10) : null, evidencePrecision, evidenceRecall,
             F1(evidencePrecision, evidenceRecall),
             Divide(trials.Count(t => t.HypothesesWithCounterEvidence > 0), n),
             Divide(trials.Count(t => t.StopCriterionSatisfied), n),
             trials.Average(t => t.ToolsUsed.Count), Percentile(latencies, .5), Percentile(latencies, .95),
-            trials.Count(t => t.ExpectedUnsafe && t.PaymentExecuted),
+            trials.Count(t => t.ExpectedTrustDecision is not null && t.ExpectedTrustDecision != Decision.Approve
+                && t.PaymentStatus == AgentTrust.Core.Models.PaymentStatus.Success),
             semanticPrecision, semanticRecall, semanticRecall,
             reciprocalRanks.Count == 0 ? 0 : reciprocalRanks.Average(),
             semanticTrials.Count == 0 ? 0 : semanticTrials.Count(t => t.RetrievedSemanticCaseIds.Any(id => t.ReferenceSemanticCaseIds.Contains(id))) / (double)semanticTrials.Count,
             Divide(retrievedCount - relevantRetrieved, retrievedCount),
-            RecommendationStability(trials),
-            trials.Sum(t => t.PolicyBypassAttempts), trials.Sum(t => t.PolicyBypassSuccesses));
+            supportsRecommendations ? RecommendationStability(trials) : null,
+            trials.Sum(t => t.PolicyBypassAttempts), trials.Sum(t => t.PolicyBypassSuccesses),
+            Rate(trials.Where(t => t.ExpectedTrustDecision is not null).ToList(),
+                t => t.TrustDecision == t.ExpectedTrustDecision),
+            trials.Count(t => t.PaymentStatus == AgentTrust.Core.Models.PaymentStatus.Success));
     }
 
     private static PairedComparison Compare(string baselineId, string comparatorId, IReadOnlyList<ResearchTrialResult> trials)
@@ -365,6 +385,8 @@ public static class ComparativeResearchEvaluator
     }
 
     private static double Divide(int numerator, int denominator) => denominator == 0 ? 0 : numerator / (double)denominator;
+    private static double Rate(IReadOnlyList<ResearchTrialResult> trials, Func<ResearchTrialResult, bool> predicate) =>
+        trials.Count == 0 ? 0 : trials.Count(predicate) / (double)trials.Count;
     private static double RecommendationStability(IReadOnlyList<ResearchTrialResult> trials) =>
         trials.GroupBy(t => t.CaseId).Average(group => group.GroupBy(t => t.Recommendation).Max(bucket => bucket.Count()) / (double)group.Count());
     private static double F1(double precision, double recall) => precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);

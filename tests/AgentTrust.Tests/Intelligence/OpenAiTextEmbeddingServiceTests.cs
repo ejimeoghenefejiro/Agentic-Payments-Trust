@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text;
-using AgentTrust.Api;
+using AgentTrust.Agents;
 
 namespace AgentTrust.Tests.Intelligence;
 
