@@ -1139,6 +1139,57 @@ INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion]) VALUES (N'
 ```
 After that, `Migrate()` sees `InitialCreate` as already applied and only runs future migrations.
 
+## Swagger weekly grocery purchase
+
+In Development, `POST /api/development/token` issues a one-hour, locally signed JWT for Swagger.
+The endpoint returns 404 outside Development and startup rejects development-token mode in every
+other environment. Submit a stable subject such as:
+
+```json
+{ "subject": "local-consumer@example.test", "displayName": "Local consumer" }
+```
+
+Copy `accessToken`, open `http://localhost:5104/swagger/index.html`, select **Authorize**, and paste
+the token without a `Bearer` prefix. Then use this sequence:
+
+1. `POST /api/consumer/agents`
+
+   ```json
+   { "agentId": "weekly-grocery-agent", "displayName": "Weekly grocery agent" }
+   ```
+
+2. `POST /api/consumer/payment-methods/setup` with a Stripe test PaymentMethod token created by
+   Stripe's test tooling (never a PAN or CVV).
+
+   ```json
+   { "provider": "Stripe", "providerToken": "pm_card_visa", "cardBrand": "visa", "last4": "4242", "expiryMonth": 12, "expiryYear": 2035 }
+   ```
+
+3. `POST /api/consumer/mandates`, substituting the returned payment-method ID.
+
+   ```json
+   { "agentId": "weekly-grocery-agent", "merchantIds": ["demo-grocery"], "paymentMethodId": "pm_REPLACE", "currency": "GBP", "perTransactionLimit": 70.00, "weeklyLimit": 70.00, "humanApprovalThreshold": 70.00, "validFrom": "2026-09-03T00:00:00Z", "validUntil": "2027-09-03T00:00:00Z" }
+   ```
+
+4. `POST /api/consumer/tasks`, substituting mandate and payment-method IDs.
+
+   ```json
+   { "instruction": "Buy my weekly groceries every Sunday up to £70.", "merchantId": "demo-grocery", "mandateId": "mandate_REPLACE", "paymentMethodId": "pm_REPLACE", "currency": "GBP", "maximumAmount": 70.00, "timezone": "Europe/London", "schedule": { "frequency": "Weekly", "dayOfWeek": "Sunday", "localTime": "10:00" }, "shoppingList": [{ "query": "milk", "quantity": 2 }, { "query": "bread", "quantity": 1 }, { "query": "eggs", "quantity": 1 }, { "query": "bananas", "quantity": 1 }], "substitutionPolicy": { "allowed": true, "maximumAdditionalAmount": 5.00 }, "deliveryAddressReference": "local-test-address" }
+   ```
+
+5. `POST /api/consumer/tasks/{taskId}/run` with `{}`. Repeating the same task occurrence returns
+   the existing execution and does not submit another payment.
+6. Read the execution through `GET /api/consumer/purchases/{purchaseId}`. For an escalation, call
+   the step-up protected approve/reject endpoint for that exact purchase.
+7. Keep `stripe listen --forward-to http://localhost:5104/api/payments/stripe/webhook` running.
+   A verified success webhook commits the reservation and creates at most one receipt.
+8. Read `GET /api/consumer/purchases/{purchaseId}/receipt` and
+   `GET /api/consumer/purchases/{purchaseId}/audit`.
+
+All ownership comes from the authenticated `agenttrust_principal_id` claim. Consumer request DTOs
+do not accept a principal/owner ID. Production must configure a real OIDC authority and audience
+and leave `Authentication:Development:Enabled` disabled.
+
 ## Known limitations
 
 - Store interfaces (`IAgentRegistry`, etc.) are synchronous; the EF-Core implementations call

@@ -81,10 +81,13 @@ public sealed class AgentPurchaseOrchestrator
             foreach (var requested in task.ShoppingList)
             {
                 var products = await connector.SearchProductsAsync(requested.SearchTerm, cancellationToken);
+                var eligibleProducts = products
+                    .Where(product => requested.MaximumUnitPrice is null || product.UnitPrice <= requested.MaximumUnitPrice)
+                    .ToList();
                 var product = requested.PreferredProductId is not null
-                    ? products.FirstOrDefault(p => p.ProductId == requested.PreferredProductId)
-                    : products.Where(p => requested.MaximumUnitPrice is null || p.UnitPrice <= requested.MaximumUnitPrice)
-                        .OrderBy(p => p.UnitPrice).FirstOrDefault();
+                    ? eligibleProducts.FirstOrDefault(candidate => candidate.ProductId == requested.PreferredProductId)
+                        ?? eligibleProducts.OrderBy(candidate => candidate.UnitPrice).FirstOrDefault()
+                    : eligibleProducts.OrderBy(candidate => candidate.UnitPrice).FirstOrDefault();
                 if (product is null) return Denied(intentId, task, $"PRODUCT_NOT_FOUND:{requested.SearchTerm}");
                 basket = await connector.AddBasketItemAsync(basket.BasketId, product.ProductId, requested.Quantity,
                     task.Preferences.Substitutions != SubstitutionPolicy.Never, cancellationToken);
@@ -118,6 +121,7 @@ public sealed class AgentPurchaseOrchestrator
                 var fingerprint = TransactionFingerprint.Create(mandate, intentId, intent.TotalAmount, intent.Currency, context);
                 lock (_gate) _pending[intentId] = new PendingPurchase(intent, task, mandate, connector,
                     fingerprint, reservation!.ReservationId, DateTimeOffset.UtcNow, liveContext);
+                _durability.SavePending(intent,fingerprint,reservation!.ReservationId,mandate.Version);
                 Update(intentId, PurchaseExecutionState.AwaitingHumanApproval, mandateCheck.Reasons);
                 Audit("TrustEscalated", intentId, task.PrincipalId, null); Audit("HumanApprovalRequested", intentId, task.PrincipalId, null);
                 return Current(intentId, intent);
@@ -132,15 +136,18 @@ public sealed class AgentPurchaseOrchestrator
     }
 
     public async Task<PurchaseOrchestrationResult> ResolveAsync(string purchaseIntentId,
-        string authenticatedPrincipalId, bool approve, string approver, CancellationToken cancellationToken = default)
+        string authenticatedPrincipalId, bool approve, string approver, CancellationToken cancellationToken = default,ICommerceConnector? recoveryConnector=null)
     {
-        PendingPurchase pending;
+        PendingPurchase? pending;
         lock (_gate)
         {
-            if (!_pending.Remove(purchaseIntentId, out pending!)) throw new InvalidOperationException("No pending purchase.");
+            _pending.Remove(purchaseIntentId, out pending);
         }
+        if(pending is null&&_durability.FindPendingOwned(purchaseIntentId,authenticatedPrincipalId)is{} durable)
+        {var task=_tasks.FindOwned(durable.Intent.TaskId,authenticatedPrincipalId)??throw new UnauthorizedAccessException();var mandate=_mandates.FindVersion(durable.Intent.MandateId,durable.MandateVersion)??throw new InvalidOperationException("Mandate version missing.");pending=new PendingPurchase(durable.Intent,task,mandate,recoveryConnector??throw new InvalidOperationException("Commerce connector required for durable recovery."),durable.Fingerprint,durable.ReservationId,DateTimeOffset.UtcNow,new(false,false));}
+        if(pending is null)throw new InvalidOperationException("No pending purchase.");
         if (pending.Task.PrincipalId != authenticatedPrincipalId) throw new UnauthorizedAccessException("Purchase does not belong to the authenticated principal.");
-        if (!approve) { _usage.Release(pending.ReservationId); Update(purchaseIntentId, PurchaseExecutionState.Denied, ["HUMAN_REJECTED"]); return Current(purchaseIntentId, pending.Intent); }
+        if (!approve) { _durability.CompletePending(purchaseIntentId,false,approver);_usage.Release(pending.ReservationId); Update(purchaseIntentId, PurchaseExecutionState.Denied, ["HUMAN_REJECTED"]); return Current(purchaseIntentId, pending.Intent); }
         var oneOff = new OneOffAuthorisation($"ooa_{Guid.NewGuid():N}", purchaseIntentId, pending.Mandate.MandateId,
             pending.Mandate.Version, pending.Fingerprint, pending.Intent.TotalAmount, pending.Intent.Currency,
             pending.Intent.MerchantId, pending.Intent.PaymentMethodReference, approver, DateTimeOffset.UtcNow,
@@ -148,6 +155,7 @@ public sealed class AgentPurchaseOrchestrator
         _oneOffs.Save(oneOff);
         if (!_oneOffs.TryConsume(oneOff.AuthorisationId, pending.Fingerprint, DateTimeOffset.UtcNow, out _))
             return Denied(purchaseIntentId, pending.Task, "ONE_OFF_AUTHORISATION_INVALID");
+        _durability.CompletePending(purchaseIntentId,true,approver);
         Audit("HumanApprovalGranted", purchaseIntentId, authenticatedPrincipalId, null);
         return await EvaluateAndExecute(pending.Intent, pending.Task, pending.Mandate, pending.Connector,
             pending.ReservationId, pending.Intent.TotalAmount, cancellationToken);
@@ -181,7 +189,6 @@ public sealed class AgentPurchaseOrchestrator
         _durability.SaveAuthorisation(auth);
         Update(intent.PurchaseIntentId, PurchaseExecutionState.Authorised, []); Audit("PurchaseAuthorisationIssued", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
         await connector.PrepareCheckoutAsync(intent, cancellationToken);
-        _durability.SaveCheckout(intent, "Submitted");
         Update(intent.PurchaseIntentId, PurchaseExecutionState.CheckoutSubmitted, []); Audit("PaymentSubmitted", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
         var result = await connector.ExecutePurchaseAsync(intent, auth, cancellationToken);
         var state = result.Status switch { ConnectorPurchaseStatus.Succeeded => PurchaseExecutionState.Purchased,
@@ -191,8 +198,9 @@ public sealed class AgentPurchaseOrchestrator
         if (state == PurchaseExecutionState.Purchased) _usage.Commit(reservationId);
         else if (state == PurchaseExecutionState.Failed) _usage.Release(reservationId);
         Update(intent.PurchaseIntentId, state, result.FailureReason is null ? [] : [result.FailureReason], result.ProviderReference, result.RequiredAction, tx.TransactionId);
-        Audit(state == PurchaseExecutionState.Purchased ? "PurchaseCompleted" : state == PurchaseExecutionState.RequiresAction ? "RequiresAction" : "PurchaseFailed", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
-        if (result.Receipt is not null) _durability.SaveReceipt(result.Receipt, task.PrincipalId);
+        Audit(state == PurchaseExecutionState.Purchased ? "PaymentConfirmed" : state == PurchaseExecutionState.RequiresAction ? "RequiresAction" : state==PurchaseExecutionState.Processing?"PaymentProcessing":"PurchaseFailed", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
+        if(state==PurchaseExecutionState.Purchased)Audit("PurchaseCompleted",intent.PurchaseIntentId,task.PrincipalId,tx.TransactionId);
+        if (result.Receipt is not null){_durability.SaveReceipt(result.Receipt, task.PrincipalId);Audit("ReceiptCreated",intent.PurchaseIntentId,task.PrincipalId,tx.TransactionId);}
         return new PurchaseOrchestrationResult(_executions.FindByIntent(intent.PurchaseIntentId)!, intent, auth, result.Receipt);
     }
 

@@ -101,7 +101,7 @@ public class Part2SafetyTests
         var withoutDailyLimit = Mandate(daily: null);
         var withDailyLimit = Mandate(daily: 60m);
 
-        Assert.Equal(decimal.MaxValue, MandateToAuthorityMapper.ToAuthority(withoutDailyLimit).DailyLimit);
+        Assert.Null(MandateToAuthorityMapper.ToAuthority(withoutDailyLimit).DailyLimit);
         Assert.Equal(60m, MandateToAuthorityMapper.ToAuthority(withDailyLimit).DailyLimit);
     }
 }

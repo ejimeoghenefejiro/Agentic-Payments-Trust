@@ -56,16 +56,25 @@ builder.Services.AddSwaggerGen(options =>
 });
 var authority = builder.Configuration["Authentication:Authority"];
 var audience = builder.Configuration["Authentication:Audience"];
+var developmentTokens = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Authentication:Development:Enabled", false);
+if (!builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Authentication:Development:Enabled", false))
+    throw new InvalidOperationException("Development token authentication cannot run outside Development.");
 if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")
     && (string.IsNullOrWhiteSpace(authority) || string.IsNullOrWhiteSpace(audience)))
     throw new InvalidOperationException("Authentication:Authority and Authentication:Audience are required outside Development/Testing.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
-    options.Authority = authority;
-    options.Audience = audience;
+    options.Authority = developmentTokens ? null : authority;
+    options.Audience = developmentTokens ? null : audience;
     options.RequireHttpsMetadata = builder.Configuration.GetValue("Authentication:RequireHttpsMetadata", true);
     options.MapInboundClaims = false;
-    options.TokenValidationParameters = new TokenValidationParameters
+    options.TokenValidationParameters = developmentTokens ? new TokenValidationParameters
+    {
+        ValidateIssuer=true,ValidIssuer="urn:agenttrust:development",ValidateAudience=true,ValidAudience="agenttrust-development",
+        ValidateIssuerSigningKey=true,IssuerSigningKey=new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(
+            builder.Configuration["Authentication:Development:SigningKey"]??throw new InvalidOperationException("Development SigningKey is required."))),
+        RequireSignedTokens=true,ValidateLifetime=true,NameClaimType="name",RoleClaimType="role",ClockSkew=TimeSpan.FromSeconds(30)
+    } : new TokenValidationParameters
     {
         ValidateIssuer = true, ValidIssuer = authority ?? "urn:agenttrust:not-configured",
         ValidateAudience = true, ValidAudience = audience ?? "agenttrust-not-configured",
@@ -196,7 +205,7 @@ else
     builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
     builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
     builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
-    builder.Services.AddSingleton<ICommerceDurability, NullCommerceDurability>();
+    builder.Services.AddSingleton<ICommerceDurability, InMemoryCommerceDurability>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),
@@ -208,7 +217,7 @@ builder.Services.AddSingleton<IPurchaseAuthorisationService>(_ =>
 {
     var encoded = Environment.GetEnvironmentVariable("PURCHASE_AUTHORISATION_KEY");
     if (!string.IsNullOrWhiteSpace(encoded)) return new HmacPurchaseAuthorisationService(Convert.FromBase64String(encoded));
-    if (!builder.Environment.IsDevelopment()) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development.");
+    if (!builder.Environment.IsDevelopment()&&!builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development/Testing.");
     return new HmacPurchaseAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 });
 builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>

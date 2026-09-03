@@ -5,6 +5,7 @@ using AgentTrust.Data;
 using AgentTrust.Scheduling;
 using Microsoft.EntityFrameworkCore;
 using Stripe;
+using System.Text.Json;
 
 namespace AgentTrust.Api;
 
@@ -57,34 +58,67 @@ public sealed class ConsumerPilotWorker(IServiceScopeFactory scopes, IConfigurat
         await db.TaskOccurrences.Where(x => x.Status == "Claimed" && x.LeaseExpiresAt < now)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Failed").SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null), token);
 
-        await ReconcileStripe(db, now, token);
+        await ReconcileStripe(services, db, now, token);
     }
 
-    private async Task ReconcileStripe(AgentTrustDbContext db, DateTimeOffset now, CancellationToken token)
+    private async Task ReconcileStripe(IServiceProvider services,AgentTrustDbContext db, DateTimeOffset now, CancellationToken token)
     {
         if (!string.Equals(configuration["Payments:Provider"], "Stripe", StringComparison.OrdinalIgnoreCase)) return;
         var key = configuration["Stripe:SecretKey"] ?? Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
         if (string.IsNullOrWhiteSpace(key)) return;
         var service = new PaymentIntentService(new StripeClient(key));
-        var attempts = await db.ConsumerPaymentAttempts.Where(x => x.ProviderPaymentId != null &&
+        var attempts = await db.ConsumerPaymentAttempts.Where(x =>
             (x.LatestStatus == "Unknown" || x.LatestStatus == "Processing" || x.LatestStatus == "Submitted") && x.UpdatedAt < now.AddMinutes(-1))
             .Take(50).ToListAsync(token);
         foreach (var attempt in attempts)
         {
+            var currentAttempt=attempt;
             try
             {
-                var payment = await service.GetAsync(attempt.ProviderPaymentId!, cancellationToken: token);
-                var state = payment.Status switch { "succeeded" => "Captured", "processing" => "Processing",
-                    "requires_action" => "RequiresAction", "requires_payment_method" or "canceled" => "Declined", _ => "Unknown" };
-                attempt.LatestStatus = state; attempt.UpdatedAt = now; attempt.Version++;
-                var execution = await db.PurchaseExecutions.SingleOrDefaultAsync(x => x.ProviderPaymentId == attempt.ProviderPaymentId, token);
+                string state;
+                if(currentAttempt.ProviderPaymentId is null)
+                {
+                    // A timeout may happen after Stripe accepted the request but before its id was
+                    // returned. Retry only an already-authorised immutable intent and reuse the
+                    // original idempotency key; Stripe will return the first PaymentIntent.
+                    var stored=await db.PurchaseIntents.AsNoTracking().SingleAsync(x=>x.PurchaseIntentId==currentAttempt.PurchaseIntentId,token);
+                    var authorised=await db.PurchaseAuthorisations.AsNoTracking().AnyAsync(x=>x.PurchaseIntentId==stored.PurchaseIntentId&&x.Status=="Active"&&x.ExpiresAt>now&&x.IntentHash==stored.IntentHash,token);
+                    if(!authorised){logger.LogWarning("Recovery skipped unauthorised or expired purchase {PurchaseIntentId}.",stored.PurchaseIntentId);continue;}
+                    var intent=new PurchaseIntent(stored.PurchaseIntentId,stored.PrincipalId,stored.AgentId,stored.MandateId,stored.TaskId,stored.MerchantId,stored.MerchantName,stored.Currency,
+                        JsonSerializer.Deserialize<List<BasketItem>>(stored.BasketJson)??[],stored.Subtotal,stored.DeliveryFee,stored.TotalAmount,stored.DeliveryAddressReference,stored.RequestedDeliveryWindow,
+                        stored.PaymentMethodReference,stored.CreatedAt,stored.QuoteExpiresAt,stored.PaymentIdempotencyKey);
+                    var durability=services.GetRequiredService<ICommerceDurability>();var processor=services.GetRequiredService<IPlatformPaymentProcessor>();
+                    durability.BeginPaymentSubmission(intent,processor.ProviderName);
+                    var recovered=await processor.ProcessAsync(intent,token);durability.RecordPaymentResult(intent,recovered);
+                    currentAttempt=await db.ConsumerPaymentAttempts.SingleAsync(x=>x.PaymentIdempotencyKey==stored.PaymentIdempotencyKey,token);
+                    state=currentAttempt.LatestStatus;
+                }
+                else
+                {
+                    var payment = await service.GetAsync(currentAttempt.ProviderPaymentId, cancellationToken: token);
+                    state = payment.Status switch { "succeeded" => "Captured", "processing" => "Processing",
+                        "requires_action" => "RequiresAction", "requires_payment_method" or "canceled" => "Declined", _ => "Unknown" };
+                }
+                currentAttempt.LatestStatus = state; currentAttempt.UpdatedAt = now; currentAttempt.Version++;
+                var checkout=await db.CheckoutExecutions.SingleOrDefaultAsync(x=>x.PaymentIdempotencyKey==currentAttempt.PaymentIdempotencyKey,token);
+                if(checkout is not null){checkout.Status=state switch{"Captured"=>"Succeeded","Declined"=>"Failed",_=>state};checkout.UpdatedAt=now;checkout.Version++;}
+                var execution = await db.PurchaseExecutions.SingleOrDefaultAsync(x => x.PurchaseIntentId == currentAttempt.PurchaseIntentId, token);
                 if (execution is not null)
                 {
                     execution.State = state switch { "Captured" => "Purchased", "Declined" => "Failed", _ => state };
+                    execution.ProviderPaymentId=currentAttempt.ProviderPaymentId;
                     execution.UpdatedAt = now; execution.Version++;
+                    var reservation=await db.SpendReservations.SingleOrDefaultAsync(x=>x.ExecutionId==currentAttempt.PurchaseIntentId&&x.Status=="Reserved",token);
+                    if(reservation is not null&&state is "Captured" or "Declined"){reservation.Status=state=="Captured"?"Committed":"Released";reservation.FinalisedAt=now;reservation.Version++;}
+                    if(state=="Captured"&&!await db.PurchaseReceipts.AnyAsync(x=>x.PurchaseIntentId==currentAttempt.PurchaseIntentId,token))
+                    {
+                        var intent=await db.PurchaseIntents.SingleAsync(x=>x.PurchaseIntentId==currentAttempt.PurchaseIntentId,token);
+                        db.PurchaseReceipts.Add(new(){ReceiptId=$"receipt_{Guid.NewGuid():N}",PurchaseIntentId=intent.PurchaseIntentId,PrincipalId=intent.PrincipalId,MerchantId=intent.MerchantId,TotalAmount=intent.TotalAmount,Currency=intent.Currency,ProviderPaymentId=currentAttempt.ProviderPaymentId!,PurchasedAt=now});
+                    }
                 }
             }
-            catch (StripeException ex) { logger.LogWarning(ex, "Stripe reconciliation failed for {PaymentId}.", attempt.ProviderPaymentId); }
+            catch (Exception ex) when(ex is StripeException or HttpRequestException or TaskCanceledException)
+            { currentAttempt.LatestStatus="Unknown";currentAttempt.FailureCode="RECONCILIATION_RETRY_FAILED";currentAttempt.UpdatedAt=now;currentAttempt.Version++;logger.LogWarning(ex, "Stripe reconciliation failed for {PaymentId}.", currentAttempt.ProviderPaymentId); }
         }
         await db.SaveChangesAsync(token);
     }

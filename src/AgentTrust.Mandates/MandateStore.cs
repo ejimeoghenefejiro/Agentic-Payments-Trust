@@ -7,6 +7,7 @@ public interface IMandateStore
     FinancialMandate? FindVersion(string mandateId, int version);
     IReadOnlyList<FinancialMandate> GetHistory(string mandateId);
     IReadOnlyList<FinancialMandate> FindByAgent(string agentId);
+    IReadOnlyList<FinancialMandate> FindByPrincipal(string principalId);
 }
 
 public sealed class InMemoryMandateStore : IMandateStore
@@ -36,4 +37,6 @@ public sealed class InMemoryMandateStore : IMandateStore
 
     public IReadOnlyList<FinancialMandate> FindByAgent(string agentId)
     { lock (_gate) return _mandates.Values.Where(m => m.AgentId == agentId).ToList(); }
+    public IReadOnlyList<FinancialMandate> FindByPrincipal(string principalId)
+    { lock (_gate) return _mandates.Values.Where(m => m.PrincipalId == principalId).GroupBy(m => m.MandateId).Select(g => g.OrderByDescending(m => m.Version).First()).ToList(); }
 }

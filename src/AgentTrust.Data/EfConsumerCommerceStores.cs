@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Data;
 using System.Text.Json;
 using AgentTrust.Commerce;
 using AgentTrust.Consumer;
@@ -90,14 +91,13 @@ public sealed class EfPurchaseAuditSink : IPurchaseAuditSink
         if (_db.PurchaseLifecycleEvents.Any(x=>x.EventId==item.EventId)) return;
         var previous=_db.PurchaseLifecycleEvents.OrderByDescending(x=>x.SequenceNumber).Select(x=>x.CurrentHash).FirstOrDefault()??"GENESIS";
         var metadata=ConsumerStoreJson.Write(item.Metadata);
-        var canonical=$"{item.EventId}|{item.EventType}|{item.PurchaseIntentId}|{item.PrincipalId}|{item.TransactionId}|{item.IntentHash}|{item.Timestamp:O}|{metadata}|{previous}";
-        var current=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        var current=PurchaseAuditHash.Compute(item,previous);
         _db.PurchaseLifecycleEvents.Add(new PurchaseLifecycleEventEntity{EventId=item.EventId,EventType=item.EventType,PurchaseIntentId=item.PurchaseIntentId,
             PrincipalId=item.PrincipalId,TransactionId=item.TransactionId,IntentHash=item.IntentHash,PreviousHash=previous,CurrentHash=current,MetadataJson=metadata,Timestamp=item.Timestamp});
         _db.SaveChanges();
     }
     public IReadOnlyList<PurchaseAuditEvent> Find(string id)=>_db.PurchaseLifecycleEvents.AsNoTracking().Where(x=>x.PurchaseIntentId==id).OrderBy(x=>x.SequenceNumber).AsEnumerable()
-        .Select(x=>new PurchaseAuditEvent(x.EventId,x.EventType,x.PurchaseIntentId,x.PrincipalId,x.TransactionId,x.IntentHash,x.Timestamp,ConsumerStoreJson.Read<Dictionary<string,string>>(x.MetadataJson))).ToList();
+        .Select(x=>new PurchaseAuditEvent(x.EventId,x.EventType,x.PurchaseIntentId,x.PrincipalId,x.TransactionId,x.IntentHash,x.Timestamp,ConsumerStoreJson.Read<Dictionary<string,string>>(x.MetadataJson),x.PreviousHash,x.CurrentHash)).ToList();
 }
 
 public sealed class EfScheduledOccurrenceStore : IScheduledOccurrenceStore
@@ -154,6 +154,8 @@ public sealed class EfMandateStore : IMandateStore
     public FinancialMandate? FindVersion(string id,int version)=>Map(_db.FinancialMandates.AsNoTracking().SingleOrDefault(x=>x.MandateId==id&&x.Version==version));
     public IReadOnlyList<FinancialMandate> GetHistory(string id)=>_db.FinancialMandates.AsNoTracking().Where(x=>x.MandateId==id).OrderBy(x=>x.Version).AsEnumerable().Select(Map).OfType<FinancialMandate>().ToList();
     public IReadOnlyList<FinancialMandate> FindByAgent(string id)=>_db.FinancialMandates.AsNoTracking().Where(x=>x.AgentId==id).AsEnumerable().Select(Map).OfType<FinancialMandate>().ToList();
+    public IReadOnlyList<FinancialMandate> FindByPrincipal(string id)=>_db.FinancialMandates.AsNoTracking().Where(x=>x.PrincipalId==id)
+        .AsEnumerable().GroupBy(x=>x.MandateId).Select(g=>g.OrderByDescending(x=>x.Version).First()).Select(Map).OfType<FinancialMandate>().ToList();
     private static FinancialMandate? Map(FinancialMandateEntity? x)=>x is null?null:new(x.MandateId,x.PrincipalId,x.AgentId,x.Merchant,x.Purpose,x.PaymentMethodId,x.PerTransactionLimit,x.WeeklyLimit,x.MonthlyLimit,x.Currency,
         ConsumerStoreJson.Read<Dictionary<string,string>>(x.TaskParametersJson),Enum.Parse<AboveLimitAction>(x.AboveLimit),Enum.Parse<MandateStatus>(x.Status),x.CreatedAt,x.ExpiresAt)
         {Version=x.Version,DailyLimit=x.DailyLimit,EffectiveFrom=x.EffectiveFrom,SupersedesMandateId=x.SupersedesMandateId};
@@ -212,8 +214,43 @@ public sealed class EfCommerceDurability : ICommerceDurability
         if(x is null){x=new(){CheckoutExecutionId=$"checkout_{item.PurchaseIntentId}",PurchaseIntentId=item.PurchaseIntentId,PaymentIdempotencyKey=item.IdempotencyKey,CreatedAt=DateTimeOffset.UtcNow,Version=1};_db.Add(x);}
         else x.Version++;x.Status=status;x.SubmissionCount++;x.UpdatedAt=DateTimeOffset.UtcNow;_db.SaveChanges();
     }
+    public void BeginPaymentSubmission(PurchaseIntent item,string provider)
+    {
+        using var transaction=_db.Database.CurrentTransaction is null?_db.Database.BeginTransaction(IsolationLevel.Serializable):null;
+        var now=DateTimeOffset.UtcNow;
+        var checkout=_db.CheckoutExecutions.SingleOrDefault(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);
+        if(checkout is null){checkout=new(){CheckoutExecutionId=$"checkout_{Guid.NewGuid():N}",PurchaseIntentId=item.PurchaseIntentId,PaymentIdempotencyKey=item.IdempotencyKey,Status="Submitted",SubmissionCount=1,CreatedAt=now,UpdatedAt=now,Version=1};_db.CheckoutExecutions.Add(checkout);}
+        else{checkout.SubmissionCount++;if(checkout.Status is not("Succeeded" or "Failed"))checkout.Status="Submitted";checkout.UpdatedAt=now;checkout.Version++;}
+        var attempt=_db.ConsumerPaymentAttempts.SingleOrDefault(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);
+        if(attempt is null)_db.ConsumerPaymentAttempts.Add(new(){PaymentAttemptId=$"payattempt_{Guid.NewGuid():N}",CheckoutExecutionId=checkout.CheckoutExecutionId,PurchaseIntentId=item.PurchaseIntentId,PaymentIdempotencyKey=item.IdempotencyKey,Provider=provider,ProviderPaymentMethodId=item.PaymentMethodReference,LatestStatus="Submitted",CreatedAt=now,UpdatedAt=now,Version=1});
+        else{attempt.CheckoutExecutionId=checkout.CheckoutExecutionId;attempt.Provider=provider;attempt.ProviderPaymentMethodId=item.PaymentMethodReference;if(attempt.LatestStatus is not("Captured" or "Declined"))attempt.LatestStatus="Submitted";attempt.UpdatedAt=now;attempt.Version++;}
+        _db.SaveChanges();transaction?.Commit();
+    }
+    public void RecordPaymentResult(PurchaseIntent item,PlatformPaymentResult result)
+    {
+        var now=DateTimeOffset.UtcNow;var attempt=_db.ConsumerPaymentAttempts.Single(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);
+        var checkout=_db.CheckoutExecutions.Single(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);
+        attempt.ProviderPaymentId=result.ProviderReference??attempt.ProviderPaymentId;attempt.LatestStatus=result.Status switch{PlatformPaymentStatus.Succeeded=>"Captured",PlatformPaymentStatus.RequiresAction=>"RequiresAction",PlatformPaymentStatus.Processing=>"Processing",PlatformPaymentStatus.Failed=>"Declined",_=>"Unknown"};attempt.FailureCode=result.FailureReason;attempt.UpdatedAt=now;attempt.Version++;
+        checkout.Status=result.Status switch{PlatformPaymentStatus.Succeeded=>"Succeeded",PlatformPaymentStatus.Failed=>"Failed",PlatformPaymentStatus.RequiresAction=>"RequiresAction",PlatformPaymentStatus.Processing=>"Processing",_=>"Unknown"};checkout.UpdatedAt=now;checkout.Version++;
+        _db.SaveChanges();
+    }
+    public void RecordPaymentUnknown(PurchaseIntent item,string? failureCode)
+    {
+        var now=DateTimeOffset.UtcNow;var attempt=_db.ConsumerPaymentAttempts.Single(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);var checkout=_db.CheckoutExecutions.Single(x=>x.PaymentIdempotencyKey==item.IdempotencyKey);
+        if(attempt.LatestStatus!="Captured"){attempt.LatestStatus="Unknown";attempt.FailureCode=failureCode;attempt.UpdatedAt=now;attempt.Version++;}
+        if(checkout.Status!="Succeeded"){checkout.Status="Unknown";checkout.UpdatedAt=now;checkout.Version++;}_db.SaveChanges();
+    }
     public void SaveReceipt(PurchaseReceipt r,string principal)
-    {if(_db.PurchaseReceipts.Any(x=>x.ReceiptId==r.ReceiptId))return;_db.PurchaseReceipts.Add(new(){ReceiptId=r.ReceiptId,PurchaseIntentId=r.PurchaseIntentId,PrincipalId=principal,MerchantId=r.MerchantId,TotalAmount=r.TotalAmount,Currency=r.Currency,ProviderPaymentId=r.ProviderReference,PurchasedAt=r.PurchasedAt});_db.SaveChanges();}
+    {if(_db.PurchaseReceipts.Any(x=>x.ReceiptId==r.ReceiptId||x.PurchaseIntentId==r.PurchaseIntentId))return;_db.PurchaseReceipts.Add(new(){ReceiptId=r.ReceiptId,PurchaseIntentId=r.PurchaseIntentId,PrincipalId=principal,MerchantId=r.MerchantId,TotalAmount=r.TotalAmount,Currency=r.Currency,ProviderPaymentId=r.ProviderReference,PurchasedAt=r.PurchasedAt});_db.SaveChanges();}
     public PurchaseReceipt? FindReceiptOwned(string id,string principal)=>_db.PurchaseReceipts.AsNoTracking().SingleOrDefault(x=>x.ReceiptId==id&&x.PrincipalId==principal) is { } x
         ? new(x.ReceiptId,x.PurchaseIntentId,x.MerchantId,x.TotalAmount,x.Currency,x.ProviderPaymentId,x.PurchasedAt) : null;
+    public PurchaseReceipt? FindReceiptByPurchaseOwned(string id,string principal)=>_db.PurchaseReceipts.AsNoTracking().SingleOrDefault(x=>x.PurchaseIntentId==id&&x.PrincipalId==principal) is { } x
+        ? new(x.ReceiptId,x.PurchaseIntentId,x.MerchantId,x.TotalAmount,x.Currency,x.ProviderPaymentId,x.PurchasedAt) : null;
+    public void SavePending(PurchaseIntent i,string fingerprint,string reservationId,int mandateVersion)
+    {if(_db.PendingConsumerApprovals.Any(x=>x.PurchaseIntentId==i.PurchaseIntentId))return;_db.PendingConsumerApprovals.Add(new(){ApprovalId=$"approval_{Guid.NewGuid():N}",PrincipalId=i.PrincipalId,PurchaseIntentId=i.PurchaseIntentId,TransactionId=i.PurchaseIntentId,MandateId=i.MandateId,MandateVersion=mandateVersion,Amount=i.TotalAmount,Currency=i.Currency,MerchantId=i.MerchantId,IntentHash=fingerprint,Status="Pending",CreatedAt=DateTimeOffset.UtcNow,ExpiresAt=DateTimeOffset.UtcNow.AddHours(1),Version=1});_db.SaveChanges();}
+    public DurablePendingPurchase? FindPendingOwned(string id,string principal)
+    {var a=_db.PendingConsumerApprovals.AsNoTracking().SingleOrDefault(x=>x.PurchaseIntentId==id&&x.PrincipalId==principal&&x.Status=="Pending"&&x.ExpiresAt>DateTimeOffset.UtcNow);if(a is null)return null;var x=_db.PurchaseIntents.AsNoTracking().Single(x=>x.PurchaseIntentId==id);var reservation=_db.SpendReservations.AsNoTracking().Single(r=>r.ExecutionId==id&&r.Status=="Reserved");var intent=new PurchaseIntent(x.PurchaseIntentId,x.PrincipalId,x.AgentId,x.MandateId,x.TaskId,x.MerchantId,x.MerchantName,x.Currency,ConsumerStoreJson.Read<List<BasketItem>>(x.BasketJson),x.Subtotal,x.DeliveryFee,x.TotalAmount,x.DeliveryAddressReference,x.RequestedDeliveryWindow,x.PaymentMethodReference,x.CreatedAt,x.QuoteExpiresAt,x.PaymentIdempotencyKey);return new(intent,a.IntentHash,reservation.ReservationId,a.MandateVersion);}
+    public void CompletePending(string id,bool approved,string approver){var x=_db.PendingConsumerApprovals.SingleOrDefault(v=>v.PurchaseIntentId==id&&v.Status=="Pending");if(x is null)return;x.Status=approved?"Approved":"Rejected";x.ApproverSubject=approver;x.DecidedAt=DateTimeOffset.UtcNow;x.ConsumedAt=approved?DateTimeOffset.UtcNow:null;x.Version++;_db.SaveChanges();}
+    public PurchaseIntent? FindIntentOwned(string id,string principal)=>_db.PurchaseIntents.AsNoTracking().SingleOrDefault(x=>x.PurchaseIntentId==id&&x.PrincipalId==principal)is{} x
+        ?new(x.PurchaseIntentId,x.PrincipalId,x.AgentId,x.MandateId,x.TaskId,x.MerchantId,x.MerchantName,x.Currency,ConsumerStoreJson.Read<List<BasketItem>>(x.BasketJson),x.Subtotal,x.DeliveryFee,x.TotalAmount,x.DeliveryAddressReference,x.RequestedDeliveryWindow,x.PaymentMethodReference,x.CreatedAt,x.QuoteExpiresAt,x.PaymentIdempotencyKey):null;
 }

@@ -5,7 +5,7 @@ public sealed record DelegatedAuthority(
     string AgentId,
     IReadOnlyCollection<string> Permissions,
     decimal PerTransactionLimit,
-    decimal DailyLimit,
+    decimal? DailyLimit,
     IReadOnlyCollection<string> ApprovedMerchants,
     IReadOnlyCollection<string> CategoryScope,
     string GeographicScope,

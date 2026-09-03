@@ -619,7 +619,7 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<decimal>("DailyLimit")
+                    b.Property<decimal?>("DailyLimit")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 

@@ -20,6 +20,7 @@ public sealed record PlatformPaymentResult(PlatformPaymentStatus Status, string?
     string? RequiredAction, string? FailureReason);
 public interface IPlatformPaymentProcessor
 {
+    string ProviderName { get; }
     Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default);
 }
 

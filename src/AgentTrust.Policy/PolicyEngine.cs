@@ -101,16 +101,24 @@ public sealed class PolicyEngine
             return Deny(intent, checks, reasonCodes);
         }
 
-        var spentToday = _ledger.AmountSpentToday(intent.AgentId, today);
-        bool withinDailyLimit = spentToday + intent.Amount <= authority.DailyLimit;
-        checks.Add(new PolicyCheck("WithinDailyLimit", withinDailyLimit,
-            withinDailyLimit
-                ? $"Daily total {spentToday + intent.Amount} within limit {authority.DailyLimit}"
-                : $"Daily total {spentToday + intent.Amount} exceeds limit {authority.DailyLimit}"));
-        if (!withinDailyLimit)
+        if (authority.DailyLimit is decimal dailyLimit)
         {
-            reasonCodes.Add("DAILY_LIMIT_EXCEEDED");
-            return Deny(intent, checks, reasonCodes);
+            var spentToday = _ledger.AmountSpentToday(intent.AgentId, today);
+            var withinDailyLimit = spentToday + intent.Amount <= dailyLimit;
+            checks.Add(new PolicyCheck("WithinDailyLimit", withinDailyLimit,
+                withinDailyLimit
+                    ? $"Daily total {spentToday + intent.Amount} within limit {dailyLimit}"
+                    : $"Daily total {spentToday + intent.Amount} exceeds limit {dailyLimit}"));
+            if (!withinDailyLimit)
+            {
+                reasonCodes.Add("DAILY_LIMIT_EXCEEDED");
+                return Deny(intent, checks, reasonCodes);
+            }
+        }
+        else
+        {
+            checks.Add(new PolicyCheck("WithinDailyLimit", true,
+                "No daily limit configured; mandate reservation controls remain authoritative"));
         }
 
         bool withinWindow = authority.WithinTimeWindow(TimeOnly.FromDateTime(now.LocalDateTime));

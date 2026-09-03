@@ -4,7 +4,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentTrust.Data;
 
 /// <summary>Minimal durable Identity store required for trusted OIDC subject linking.</summary>
-public sealed class EfApplicationUserStore : IUserStore<ApplicationUser>, IUserLoginStore<ApplicationUser>
+public sealed class EfApplicationUserStore : IUserStore<ApplicationUser>, IUserLoginStore<ApplicationUser>,
+    IUserPasswordStore<ApplicationUser>
 {
     private readonly AgentTrustDbContext _db;
     public EfApplicationUserStore(AgentTrustDbContext db) => _db = db;
@@ -24,6 +25,10 @@ public sealed class EfApplicationUserStore : IUserStore<ApplicationUser>, IUserL
     public Task SetUserNameAsync(ApplicationUser user, string? name, CancellationToken token) { user.UserName = name; return Task.CompletedTask; }
     public Task<string?> GetNormalizedUserNameAsync(ApplicationUser user, CancellationToken token) => Task.FromResult(user.NormalizedUserName);
     public Task SetNormalizedUserNameAsync(ApplicationUser user, string? name, CancellationToken token) { user.NormalizedUserName = name; return Task.CompletedTask; }
+    public Task SetPasswordHashAsync(ApplicationUser user, string? passwordHash, CancellationToken token)
+    { user.PasswordHash = passwordHash; return Task.CompletedTask; }
+    public Task<string?> GetPasswordHashAsync(ApplicationUser user, CancellationToken token) => Task.FromResult(user.PasswordHash);
+    public Task<bool> HasPasswordAsync(ApplicationUser user, CancellationToken token) => Task.FromResult(user.PasswordHash is not null);
 
     public async Task AddLoginAsync(ApplicationUser user, UserLoginInfo login, CancellationToken token)
     { _db.ApplicationUserLogins.Add(new IdentityUserLogin<string> { UserId = user.Id, LoginProvider = login.LoginProvider, ProviderKey = login.ProviderKey, ProviderDisplayName = login.ProviderDisplayName }); await _db.SaveChangesAsync(token); }

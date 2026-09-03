@@ -13,16 +13,17 @@ public sealed class DemoGroceryConnector : ICommerceConnector
 {
     private readonly object _gate = new(); private readonly IPurchaseAuthorisationService _authorisations;
     private readonly IPlatformPaymentProcessor _payments;
+    private readonly ICommerceDurability _durability;
     private readonly Dictionary<string, Product> _catalogue; private readonly Dictionary<string, MutableBasket> _baskets = new();
     private readonly Dictionary<string, ConnectorPurchaseResult> _purchases = new();
     private sealed class MutableBasket { public required string Id; public required string PrincipalId; public Dictionary<string, (int Quantity, bool Substitute)> Items { get; } = new(); public string? DeliveryOptionId; }
     public string MerchantId => "GroceryDemo"; public string MerchantName => "Demo Grocery";
 
     public DemoGroceryConnector(IPurchaseAuthorisationService authorisations, IPlatformPaymentProcessor payments,
-        IEnumerable<Product>? catalogue = null)
+        IEnumerable<Product>? catalogue = null, ICommerceDurability? durability = null)
     {
-        _authorisations = authorisations; _payments = payments;
-        _catalogue = (catalogue ?? DefaultCatalogue()).ToDictionary(x => x.ProductId, StringComparer.OrdinalIgnoreCase);
+        _authorisations = authorisations; _payments = payments; _durability = durability ?? new NullCommerceDurability();
+        _catalogue = (catalogue is not null && catalogue.Any() ? catalogue : DefaultCatalogue()).ToDictionary(x => x.ProductId, StringComparer.OrdinalIgnoreCase);
     }
     public Task<IReadOnlyList<Product>> SearchProductsAsync(string query, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>(_catalogue.Values.Where(p => p.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
@@ -51,8 +52,18 @@ public sealed class DemoGroceryConnector : ICommerceConnector
         if (!_authorisations.Verify(intent, authorisation, DateTimeOffset.UtcNow)) throw new UnauthorizedAccessException("Purchase authorisation is invalid or does not match the intent.");
         lock (_gate) if (_purchases.TryGetValue(intent.IdempotencyKey, out var existing)) return existing;
         PlatformPaymentResult payment;
-        try { payment = await _payments.ProcessAsync(intent, cancellationToken); }
-        catch { lock (_gate) _purchases[intent.IdempotencyKey] = new ConnectorPurchaseResult(ConnectorPurchaseStatus.Unknown, null, null, "PAYMENT_OUTCOME_UNKNOWN", null); throw; }
+        _durability.BeginPaymentSubmission(intent, _payments.ProviderName);
+        try
+        {
+            payment = await _payments.ProcessAsync(intent, cancellationToken);
+            _durability.RecordPaymentResult(intent, payment);
+        }
+        catch
+        {
+            _durability.RecordPaymentUnknown(intent, "PAYMENT_OUTCOME_UNKNOWN");
+            lock (_gate) _purchases[intent.IdempotencyKey] = new ConnectorPurchaseResult(ConnectorPurchaseStatus.Unknown, null, null, "PAYMENT_OUTCOME_UNKNOWN", null);
+            throw;
+        }
         var result = payment.Status switch
         {
             PlatformPaymentStatus.Succeeded => new ConnectorPurchaseResult(ConnectorPurchaseStatus.Succeeded, payment.ProviderReference, null, null,
@@ -80,6 +91,7 @@ public sealed class MockPlatformPaymentProcessor : IPlatformPaymentProcessor
 {
     private readonly object _gate = new(); private readonly Dictionary<string, PlatformPaymentResult> _results = new();
     public int SubmissionCount { get; private set; } public PlatformPaymentStatus NextStatus { get; set; } = PlatformPaymentStatus.Succeeded;
+    public string ProviderName => "Mock";
     public Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default)
     { lock (_gate) { if (_results.TryGetValue(intent.IdempotencyKey, out var existing)) return Task.FromResult(existing); SubmissionCount++; var result = new PlatformPaymentResult(NextStatus, $"demo_pay_{intent.PurchaseIntentId}", NextStatus == PlatformPaymentStatus.RequiresAction ? "demo_client_secret" : null, NextStatus == PlatformPaymentStatus.Failed ? "SIMULATED_DECLINE" : null); _results[intent.IdempotencyKey] = result; return Task.FromResult(result); } }
 }

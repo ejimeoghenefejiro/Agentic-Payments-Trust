@@ -15,6 +15,7 @@ public sealed record StripePaymentOptions(StripePaymentMode Mode = StripePayment
 /// accepts PAN/CVV. External merchant connectors must not use this adapter.</summary>
 public sealed class StripePaymentAdapter : IPlatformPaymentProcessor
 {
+    public string ProviderName => "Stripe";
     private readonly PaymentIntentService _service; private readonly IPaymentMethodStore _methods;
     public StripePaymentAdapter(string secretKey, StripePaymentOptions options, IPaymentMethodStore methods)
     {

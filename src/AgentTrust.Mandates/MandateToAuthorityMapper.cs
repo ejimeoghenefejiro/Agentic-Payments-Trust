@@ -29,7 +29,7 @@ public static class MandateToAuthorityMapper
             // The atomic mandate reservation is authoritative for daily/weekly/monthly usage.
             // Mirror an explicit daily cap here, but do not accidentally turn the per-transaction
             // limit into a one-transaction-per-day limit when no daily cap was granted.
-            DailyLimit: oneOffApprovedAmount is not null ? decimal.MaxValue : mandate.DailyLimit ?? decimal.MaxValue,
+            DailyLimit: oneOffApprovedAmount is not null ? null : mandate.DailyLimit,
             ApprovedMerchants: new[] { mandate.Merchant },
             CategoryScope: new[] { mandate.Purpose },
             GeographicScope: "ANY",

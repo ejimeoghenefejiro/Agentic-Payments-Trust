@@ -47,7 +47,7 @@ public sealed class DelegatedAuthorityEntity
     public string AgentId { get; set; } = "";
     public List<string> Permissions { get; set; } = new();
     public decimal PerTransactionLimit { get; set; }
-    public decimal DailyLimit { get; set; }
+    public decimal? DailyLimit { get; set; }
     public List<string> ApprovedMerchants { get; set; } = new();
     public List<string> CategoryScope { get; set; } = new();
     public string GeographicScope { get; set; } = "";

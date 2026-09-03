@@ -61,6 +61,32 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task ConsumerSwaggerPath_CreatesOwnedMandateTaskPurchaseReceiptAndAudit_Idempotently()
+    {
+        var suffix=Guid.NewGuid().ToString("N")[..8];var principal=$"consumer_{suffix}";var agent=$"consumer_agent_{suffix}";
+        _client.DefaultRequestHeaders.Add("X-Test-Principal",principal);_client.DefaultRequestHeaders.Add("X-Test-Mfa","true");
+        Assert.Equal(HttpStatusCode.Created,(await _client.PostAsJsonAsync("/api/consumer/agents",new{agentId=agent,displayName="Test consumer"})).StatusCode);
+        var methodResponse=await _client.PostAsJsonAsync("/api/consumer/payment-methods/setup",new{provider="Stripe",providerToken=$"pm_test_{suffix}",cardBrand="visa",last4="4242",expiryMonth=12,expiryYear=2035});
+        Assert.Equal(HttpStatusCode.OK,methodResponse.StatusCode);var method=await methodResponse.Content.ReadFromJsonAsync<JsonElement>();var methodId=method.GetProperty("paymentMethodId").GetString()!;
+        var now=DateTimeOffset.UtcNow;
+        var mandateResponse=await _client.PostAsJsonAsync("/api/consumer/mandates",new{agentId=agent,merchantIds=new[]{"demo-grocery"},paymentMethodId=methodId,currency="GBP",perTransactionLimit=70m,weeklyLimit=70m,humanApprovalThreshold=70m,validFrom=now.AddMinutes(-1),validUntil=now.AddMonths(1)});
+        Assert.Equal(HttpStatusCode.Created,mandateResponse.StatusCode);var mandate=await mandateResponse.Content.ReadFromJsonAsync<JsonElement>();var mandateId=mandate.GetProperty("mandateId").GetString()!;
+        var taskResponse=await _client.PostAsJsonAsync("/api/consumer/tasks",new{instruction="Buy weekly groceries",merchantId="demo-grocery",mandateId,paymentMethodId=methodId,currency="GBP",maximumAmount=70m,timezone="Europe/London",schedule=new{frequency="Weekly",dayOfWeek="Sunday",localTime="10:00"},shoppingList=new[]{new{query="milk",quantity=2},new{query="bread",quantity=1},new{query="eggs",quantity=1},new{query="bananas",quantity=1}},substitutionPolicy=new{allowed=true,maximumAdditionalAmount=5m},deliveryAddressReference="test-address"});
+        Assert.Equal(HttpStatusCode.Created,taskResponse.StatusCode);var task=await taskResponse.Content.ReadFromJsonAsync<JsonElement>();var taskId=task.GetProperty("taskId").GetString()!;
+        var scheduled=DateTimeOffset.Parse("2030-01-06T10:00:00Z");
+        var first=await _client.PostAsJsonAsync($"/api/consumer/tasks/{taskId}/run",new{scheduledFor=scheduled,liveMode=false,explicitLiveConfirmation=false});
+        Assert.Equal(HttpStatusCode.OK,first.StatusCode);var firstBody=await first.Content.ReadFromJsonAsync<JsonElement>();var execution=firstBody.GetProperty("execution");var executionId=execution.GetProperty("executionId").GetString()!;
+        Assert.True(execution.GetProperty("state").GetInt32()==(int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,firstBody.ToString());
+        var second=await _client.PostAsJsonAsync($"/api/consumer/tasks/{taskId}/run",new{scheduledFor=scheduled,liveMode=false,explicitLiveConfirmation=false});
+        var secondBody=await second.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal(executionId,secondBody.GetProperty("execution").GetProperty("executionId").GetString());
+        Assert.Equal(HttpStatusCode.OK,(await _client.GetAsync($"/api/consumer/purchases/{executionId}/receipt")).StatusCode);
+        var audit=await _client.GetFromJsonAsync<JsonElement>($"/api/consumer/purchases/{executionId}/audit");Assert.True(audit.GetProperty("isValid").GetBoolean());Assert.True(audit.GetProperty("eventCount").GetInt32()>=8);
+        using var outsider=_factory.CreateClient();outsider.DefaultRequestHeaders.Add("X-Test-Principal",$"other_{suffix}");
+        Assert.Equal(HttpStatusCode.NotFound,(await outsider.GetAsync($"/api/consumer/purchases/{executionId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,(await outsider.GetAsync($"/api/consumer/purchases/{executionId}/receipt")).StatusCode);
+    }
+
+    [Fact]
     public void SemanticMemoryIsLexicalWhenProviderIsNotExplicitlyEnabled()
     {
         using var scope = _factory.Services.CreateScope();
