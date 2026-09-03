@@ -22,6 +22,21 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<InvestigationStateEntity> InvestigationStates => Set<InvestigationStateEntity>();
     public DbSet<SemanticCaseEntity> SemanticCases => Set<SemanticCaseEntity>();
     public DbSet<DecisionFeedbackEntity> DecisionFeedback => Set<DecisionFeedbackEntity>();
+    public DbSet<ConsumerProfileEntity> ConsumerProfiles => Set<ConsumerProfileEntity>();
+    public DbSet<ConnectedServiceEntity> ConnectedServices => Set<ConnectedServiceEntity>();
+    public DbSet<ConsumerPurchaseTaskEntity> ConsumerPurchaseTasks => Set<ConsumerPurchaseTaskEntity>();
+    public DbSet<PurchaseExecutionEntity> PurchaseExecutions => Set<PurchaseExecutionEntity>();
+    public DbSet<PurchaseIntentEntity> PurchaseIntents => Set<PurchaseIntentEntity>();
+    public DbSet<PurchaseAuthorisationEntity> PurchaseAuthorisations => Set<PurchaseAuthorisationEntity>();
+    public DbSet<PurchaseLifecycleEventEntity> PurchaseLifecycleEvents => Set<PurchaseLifecycleEventEntity>();
+    public DbSet<PendingConsumerApprovalEntity> PendingConsumerApprovals => Set<PendingConsumerApprovalEntity>();
+    public DbSet<CheckoutExecutionEntity> CheckoutExecutions => Set<CheckoutExecutionEntity>();
+    public DbSet<ConsumerPaymentAttemptEntity> ConsumerPaymentAttempts => Set<ConsumerPaymentAttemptEntity>();
+    public DbSet<TaskOccurrenceEntity> TaskOccurrences => Set<TaskOccurrenceEntity>();
+    public DbSet<SpendReservationEntity> SpendReservations => Set<SpendReservationEntity>();
+    public DbSet<OneOffAuthorisationEntity> OneOffAuthorisations => Set<OneOffAuthorisationEntity>();
+    public DbSet<StripeWebhookEventEntity> StripeWebhookEvents => Set<StripeWebhookEventEntity>();
+    public DbSet<PurchaseReceiptEntity> PurchaseReceipts => Set<PurchaseReceiptEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,6 +113,104 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasIndex(e => e.InvestigationId);
             b.HasIndex(e => e.ValidationStatus);
         });
+
+        ConfigureConsumerCommerce(modelBuilder);
+    }
+
+    private static void ConfigureConsumerCommerce(ModelBuilder modelBuilder)
+    {
+        Configure<ConsumerProfileEntity>(modelBuilder, x => x.PrincipalId);
+        Configure<ConnectedServiceEntity>(modelBuilder, x => x.Id);
+        modelBuilder.Entity<ConnectedServiceEntity>().HasIndex(x => new { x.PrincipalId, x.Provider, x.ExternalAccountReference }).IsUnique();
+
+        Configure<ConsumerPurchaseTaskEntity>(modelBuilder, x => x.TaskId);
+        modelBuilder.Entity<ConsumerPurchaseTaskEntity>(b =>
+        {
+            b.HasIndex(x => new { x.PrincipalId, x.Status });
+            b.HasIndex(x => x.NextExecutionAt);
+            b.Property(x => x.MaximumAmount).HasPrecision(18, 2);
+        });
+
+        Configure<PurchaseExecutionEntity>(modelBuilder, x => x.ExecutionId);
+        modelBuilder.Entity<PurchaseExecutionEntity>(b =>
+        {
+            b.HasIndex(x => new { x.TaskId, x.ScheduledFor }).IsUnique();
+            b.HasIndex(x => x.PurchaseIntentId).IsUnique();
+            b.HasIndex(x => x.ProviderPaymentId).IsUnique();
+            b.HasIndex(x => new { x.PrincipalId, x.State });
+        });
+
+        Configure<PurchaseIntentEntity>(modelBuilder, x => x.PurchaseIntentId);
+        modelBuilder.Entity<PurchaseIntentEntity>(b =>
+        {
+            b.HasIndex(x => x.ExecutionId).IsUnique();
+            b.HasIndex(x => x.PaymentIdempotencyKey).IsUnique();
+            b.HasIndex(x => new { x.PrincipalId, x.CreatedAt });
+            Money(b.Property(x => x.Subtotal)); Money(b.Property(x => x.DeliveryFee)); Money(b.Property(x => x.TotalAmount));
+        });
+
+        Configure<PurchaseAuthorisationEntity>(modelBuilder, x => x.AuthorisationId);
+        modelBuilder.Entity<PurchaseAuthorisationEntity>(b =>
+        {
+            b.HasIndex(x => x.PurchaseIntentId).IsUnique();
+            b.HasIndex(x => new { x.Status, x.ExpiresAt });
+            Money(b.Property(x => x.AuthorisedAmount));
+        });
+
+        modelBuilder.Entity<PurchaseLifecycleEventEntity>(b =>
+        {
+            b.HasKey(x => x.SequenceNumber); b.Property(x => x.SequenceNumber).ValueGeneratedOnAdd();
+            b.HasIndex(x => x.EventId).IsUnique(); b.HasIndex(x => new { x.PurchaseIntentId, x.SequenceNumber });
+        });
+
+        Configure<PendingConsumerApprovalEntity>(modelBuilder, x => x.ApprovalId);
+        modelBuilder.Entity<PendingConsumerApprovalEntity>(b =>
+        {
+            b.HasIndex(x => x.PurchaseIntentId).IsUnique(); b.HasIndex(x => new { x.PrincipalId, x.Status });
+            Money(b.Property(x => x.Amount));
+        });
+
+        Configure<CheckoutExecutionEntity>(modelBuilder, x => x.CheckoutExecutionId);
+        modelBuilder.Entity<CheckoutExecutionEntity>(b =>
+        { b.HasIndex(x => x.PurchaseIntentId).IsUnique(); b.HasIndex(x => x.PaymentIdempotencyKey).IsUnique(); });
+
+        Configure<ConsumerPaymentAttemptEntity>(modelBuilder, x => x.PaymentAttemptId);
+        modelBuilder.Entity<ConsumerPaymentAttemptEntity>(b =>
+        {
+            b.ToTable("ConsumerPaymentAttempts");
+            b.HasIndex(x => x.PaymentIdempotencyKey).IsUnique(); b.HasIndex(x => x.ProviderPaymentId).IsUnique();
+            b.HasIndex(x => new { x.LatestStatus, x.UpdatedAt });
+        });
+
+        Configure<TaskOccurrenceEntity>(modelBuilder, x => x.OccurrenceId);
+        modelBuilder.Entity<TaskOccurrenceEntity>(b =>
+        { b.HasIndex(x => new { x.TaskId, x.ScheduledFor }).IsUnique(); b.HasIndex(x => new { x.Status, x.LeaseExpiresAt }); });
+
+        Configure<SpendReservationEntity>(modelBuilder, x => x.ReservationId);
+        modelBuilder.Entity<SpendReservationEntity>(b =>
+        { b.HasIndex(x => x.ExecutionId).IsUnique(); b.HasIndex(x => new { x.MandateId, x.Status, x.ReservedAt }); Money(b.Property(x => x.Amount)); });
+
+        Configure<OneOffAuthorisationEntity>(modelBuilder, x => x.AuthorisationId);
+        modelBuilder.Entity<OneOffAuthorisationEntity>(b =>
+        { b.HasIndex(x => x.PurchaseIntentId).IsUnique(); b.HasIndex(x => x.TransactionFingerprint).IsUnique(); Money(b.Property(x => x.MaximumAmount)); });
+
+        Configure<StripeWebhookEventEntity>(modelBuilder, x => x.ProviderEventId);
+        modelBuilder.Entity<StripeWebhookEventEntity>().HasIndex(x => new { x.Status, x.ReceivedAt });
+
+        modelBuilder.Entity<PurchaseReceiptEntity>(b =>
+        {
+            b.HasKey(x => x.ReceiptId); b.HasIndex(x => x.PurchaseIntentId).IsUnique();
+            b.HasIndex(x => x.ProviderPaymentId).IsUnique(); b.HasIndex(x => new { x.PrincipalId, x.PurchasedAt });
+            Money(b.Property(x => x.TotalAmount));
+        });
+
+        static void Configure<TEntity>(ModelBuilder builder,
+            System.Linq.Expressions.Expression<Func<TEntity, object?>> key) where TEntity : class
+        {
+            builder.Entity<TEntity>().HasKey(key);
+            builder.Entity<TEntity>().Property<long>("Version").IsConcurrencyToken();
+        }
+        static void Money(Microsoft.EntityFrameworkCore.Metadata.Builders.PropertyBuilder<decimal> property) => property.HasPrecision(18, 2);
     }
 }
 

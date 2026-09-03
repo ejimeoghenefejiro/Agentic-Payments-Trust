@@ -3,6 +3,7 @@ using System;
 using AgentTrust.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AgentTrust.Data.Migrations.Postgres.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    partial class AgentTrustDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260903134503_AddConsumerPilotPhase2DurableState")]
+    partial class AddConsumerPilotPhase2DurableState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

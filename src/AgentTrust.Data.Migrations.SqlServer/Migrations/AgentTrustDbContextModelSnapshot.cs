@@ -145,6 +145,262 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("AuditRecords");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.CheckoutExecutionEntity", b =>
+                {
+                    b.Property<string>("CheckoutExecutionId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PaymentIdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("SubmissionCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CheckoutExecutionId");
+
+                    b.HasIndex("PaymentIdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.ToTable("CheckoutExecutions");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConnectedServiceEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("CapabilitiesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ConnectionType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CredentialReference")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExternalAccountReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset?>("LastVerifiedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PrincipalId", "Provider", "ExternalAccountReference")
+                        .IsUnique();
+
+                    b.ToTable("ConnectedServices");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentAttemptEntity", b =>
+                {
+                    b.Property<string>("PaymentAttemptId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("CheckoutExecutionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("FailureCode")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("LatestStatus")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PaymentIdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderCustomerId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderPaymentId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ProviderPaymentMethodId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PaymentAttemptId");
+
+                    b.HasIndex("PaymentIdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderPaymentId")
+                        .IsUnique()
+                        .HasFilter("[ProviderPaymentId] IS NOT NULL");
+
+                    b.HasIndex("LatestStatus", "UpdatedAt");
+
+                    b.ToTable("ConsumerPaymentAttempts", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerProfileEntity", b =>
+                {
+                    b.Property<string>("PrincipalId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Timezone")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PrincipalId");
+
+                    b.ToTable("ConsumerProfiles");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPurchaseTaskEntity", b =>
+                {
+                    b.Property<string>("TaskId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("MaximumAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("MerchantScopeJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("NextExecutionAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PaymentMethodId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreferencesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Schedule")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ShoppingListJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Timezone")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("TaskId");
+
+                    b.HasIndex("NextExecutionAt");
+
+                    b.HasIndex("PrincipalId", "Status");
+
+                    b.ToTable("ConsumerPurchaseTasks");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.DecisionFeedbackEntity", b =>
                 {
                     b.Property<string>("TransactionId")
@@ -335,6 +591,78 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("Merchants");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.OneOffAuthorisationEntity", b =>
+                {
+                    b.Property<string>("AuthorisationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("ApprovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ApprovedBy")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("MaximumAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("MerchantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PaymentMethodReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TransactionFingerprint")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("AuthorisationId");
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("TransactionFingerprint")
+                        .IsUnique();
+
+                    b.ToTable("OneOffAuthorisations");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.PaymentOutcomeEntity", b =>
                 {
                     b.Property<string>("TransactionId")
@@ -354,6 +682,79 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasKey("TransactionId");
 
                     b.ToTable("PaymentOutcomes");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.PendingConsumerApprovalEntity", b =>
+                {
+                    b.Property<string>("ApprovalId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ApproverSubject")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("IntentHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MerchantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TransactionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ApprovalId");
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId", "Status");
+
+                    b.ToTable("PendingConsumerApprovals");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.PolicyDecisionEntity", b =>
@@ -449,6 +850,356 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("ProfileSnapshots");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.PurchaseAuthorisationEntity", b =>
+                {
+                    b.Property<string>("AuthorisationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Algorithm")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("AuthorisedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("IntentHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MerchantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Signature")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SigningKeyId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TransactionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("AuthorisationId");
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.ToTable("PurchaseAuthorisations");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.PurchaseExecutionEntity", b =>
+                {
+                    b.Property<string>("ExecutionId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ProviderPaymentId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RequiredAction")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ScheduledFor")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TransactionId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ExecutionId");
+
+                    b.HasIndex("ProviderPaymentId")
+                        .IsUnique()
+                        .HasFilter("[ProviderPaymentId] IS NOT NULL");
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId", "State");
+
+                    b.HasIndex("TaskId", "ScheduledFor")
+                        .IsUnique();
+
+                    b.ToTable("PurchaseExecutions");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.PurchaseIntentEntity", b =>
+                {
+                    b.Property<string>("PurchaseIntentId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BasketJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DeliveryAddressReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("DeliveryFee")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ExecutionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("IntentHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MerchantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MerchantName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PaymentIdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PaymentMethodReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("QuoteExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("RequestedDeliveryWindow")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PurchaseIntentId");
+
+                    b.HasIndex("ExecutionId")
+                        .IsUnique();
+
+                    b.HasIndex("PaymentIdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId", "CreatedAt");
+
+                    b.ToTable("PurchaseIntents");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.PurchaseLifecycleEventEntity", b =>
+                {
+                    b.Property<long>("SequenceNumber")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SequenceNumber"));
+
+                    b.Property<string>("CurrentHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("IntentHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreviousHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("Timestamp")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("TransactionId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("SequenceNumber");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("PurchaseIntentId", "SequenceNumber");
+
+                    b.ToTable("PurchaseLifecycleEvents");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.PurchaseReceiptEntity", b =>
+                {
+                    b.Property<string>("ReceiptId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MerchantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ProviderPaymentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("PurchasedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("ReceiptId");
+
+                    b.HasIndex("ProviderPaymentId")
+                        .IsUnique();
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId", "PurchasedAt");
+
+                    b.ToTable("PurchaseReceipts");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.SemanticCaseEntity", b =>
                 {
                     b.Property<string>("CaseId")
@@ -508,6 +1259,142 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("UpdatedAt");
 
                     b.ToTable("SemanticCases");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.SpendReservationEntity", b =>
+                {
+                    b.Property<string>("ReservationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExecutionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("FinalisedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("MandateVersion")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ReservationId");
+
+                    b.HasIndex("ExecutionId")
+                        .IsUnique();
+
+                    b.HasIndex("MandateId", "Status", "ReservedAt");
+
+                    b.ToTable("SpendReservations");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.StripeWebhookEventEntity", b =>
+                {
+                    b.Property<string>("ProviderEventId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ProviderCreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProviderPaymentId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ProviderEventId");
+
+                    b.HasIndex("Status", "ReceivedAt");
+
+                    b.ToTable("StripeWebhookEvents");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.TaskOccurrenceEntity", b =>
+                {
+                    b.Property<string>("OccurrenceId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset?>("ClaimedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ClaimedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ScheduledFor")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OccurrenceId");
+
+                    b.HasIndex("Status", "LeaseExpiresAt");
+
+                    b.HasIndex("TaskId", "ScheduledFor")
+                        .IsUnique();
+
+                    b.ToTable("TaskOccurrences");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.TransactionEventEntity", b =>
