@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 
 namespace AgentTrust.Data;
 
@@ -37,10 +38,50 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<OneOffAuthorisationEntity> OneOffAuthorisations => Set<OneOffAuthorisationEntity>();
     public DbSet<StripeWebhookEventEntity> StripeWebhookEvents => Set<StripeWebhookEventEntity>();
     public DbSet<PurchaseReceiptEntity> PurchaseReceipts => Set<PurchaseReceiptEntity>();
+    public DbSet<ApplicationUser> ApplicationUsers => Set<ApplicationUser>();
+    public DbSet<IdentityUserLogin<string>> ApplicationUserLogins => Set<IdentityUserLogin<string>>();
+    public DbSet<FinancialMandateEntity> FinancialMandates => Set<FinancialMandateEntity>();
+    public DbSet<ConsumerPaymentMethodEntity> ConsumerPaymentMethods => Set<ConsumerPaymentMethodEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<AgentEntity>().HasKey(e => e.AgentId);
+        modelBuilder.Entity<ApplicationUser>(b =>
+        {
+            b.ToTable("AspNetUsers"); b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasMaxLength(128);
+            b.Property(x => x.PrincipalId).HasMaxLength(128);
+            b.Property(x => x.ExternalIssuer).HasMaxLength(256);
+            b.Property(x => x.ExternalSubject).HasMaxLength(256);
+            b.Property(x => x.UserName).HasMaxLength(256);
+            b.Property(x => x.NormalizedUserName).HasMaxLength(256);
+            b.Property(x => x.Email).HasMaxLength(256);
+            b.Property(x => x.NormalizedEmail).HasMaxLength(256);
+            b.HasIndex(x => new { x.ExternalIssuer, x.ExternalSubject }).IsUnique();
+            b.HasIndex(x => x.PrincipalId).IsUnique();
+            b.HasIndex(x => x.NormalizedUserName).IsUnique();
+            b.HasIndex(x => x.NormalizedEmail);
+            b.Property(x => x.Version).IsConcurrencyToken();
+        });
+        modelBuilder.Entity<IdentityUserLogin<string>>(b =>
+        {
+            b.ToTable("AspNetUserLogins"); b.HasKey(x => new { x.LoginProvider, x.ProviderKey });
+            b.Property(x => x.LoginProvider).HasMaxLength(128);
+            b.Property(x => x.ProviderKey).HasMaxLength(256);
+            b.Property(x => x.UserId).HasMaxLength(128).IsRequired();
+            b.HasIndex(x => x.UserId);
+            b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<FinancialMandateEntity>(b =>
+        {
+            b.HasKey(x => new { x.MandateId, x.Version });
+            b.HasIndex(x => new { x.PrincipalId, x.Status }); b.HasIndex(x => new { x.AgentId, x.Status });
+            b.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            b.Property(x => x.PerTransactionLimit).HasPrecision(18,2); b.Property(x => x.DailyLimit).HasPrecision(18,2);
+            b.Property(x => x.WeeklyLimit).HasPrecision(18,2); b.Property(x => x.MonthlyLimit).HasPrecision(18,2);
+        });
+        modelBuilder.Entity<ConsumerPaymentMethodEntity>(b =>
+        { b.HasKey(x => x.PaymentMethodId); b.Property(x => x.Version).IsConcurrencyToken(); b.HasIndex(x => new { x.PrincipalId, x.Status }); b.HasIndex(x => new { x.Provider, x.ProviderToken }).IsUnique(); });
         modelBuilder.Entity<PrincipalEntity>().HasKey(e => e.PrincipalId);
         modelBuilder.Entity<MerchantEntity>().HasKey(e => e.MerchantId);
         modelBuilder.Entity<PrincipalBindingEntity>().HasKey(e => e.AgentId);

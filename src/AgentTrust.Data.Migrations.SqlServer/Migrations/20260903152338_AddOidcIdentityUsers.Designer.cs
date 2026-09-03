@@ -4,6 +4,7 @@ using AgentTrust.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    partial class AgentTrustDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260903152338_AddOidcIdentityUsers")]
+    partial class AddOidcIdentityUsers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -389,55 +392,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("ConsumerPaymentAttempts", (string)null);
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentMethodEntity", b =>
-                {
-                    b.Property<string>("PaymentMethodId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("CardBrand")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("ExpiryMonth")
-                        .HasColumnType("int");
-
-                    b.Property<int>("ExpiryYear")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Last4")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Provider")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("ProviderToken")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.HasKey("PaymentMethodId");
-
-                    b.HasIndex("PrincipalId", "Status");
-
-                    b.HasIndex("Provider", "ProviderToken")
-                        .IsUnique();
-
-                    b.ToTable("ConsumerPaymentMethods");
-                });
-
             modelBuilder.Entity("AgentTrust.Data.ConsumerProfileEntity", b =>
                 {
                     b.Property<string>("PrincipalId")
@@ -676,91 +630,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasKey("TransactionId");
 
                     b.ToTable("EvidenceManifests");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>
-                {
-                    b.Property<string>("MandateId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<int>("Version")
-                        .HasColumnType("int");
-
-                    b.Property<string>("AboveLimit")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("AgentId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("ConcurrencyVersion")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<decimal?>("DailyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTimeOffset>("EffectiveFrom")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Merchant")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<decimal?>("MonthlyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("PaymentMethodId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<decimal>("PerTransactionLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Purpose")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("SupersedesMandateId")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("TaskParametersJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<decimal?>("WeeklyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.HasKey("MandateId", "Version");
-
-                    b.HasIndex("AgentId", "Status");
-
-                    b.HasIndex("PrincipalId", "Status");
-
-                    b.ToTable("FinancialMandates");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>

@@ -42,7 +42,7 @@ public sealed class PurchaseAuthorisation
     public string PrincipalId { get; } public string AgentId { get; } public string MandateId { get; }
     public int MandateVersion { get; } public string MerchantId { get; } public decimal AuthorisedAmount { get; }
     public string Currency { get; } public DateTimeOffset AuthorisedAt { get; } public DateTimeOffset ExpiresAt { get; }
-    public string PolicyVersion { get; } public string IntentHash { get; } internal string Signature { get; }
+    public string PolicyVersion { get; } public string IntentHash { get; } public string Signature { get; }
 }
 
 public static class PurchaseIntentCanonicalizer

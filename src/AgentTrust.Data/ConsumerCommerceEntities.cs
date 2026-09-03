@@ -253,3 +253,41 @@ public sealed class PurchaseReceiptEntity
     public string ProviderPaymentId { get; set; } = "";
     public DateTimeOffset PurchasedAt { get; set; }
 }
+
+public sealed class FinancialMandateEntity
+{
+    public string MandateId { get; set; } = "";
+    public int Version { get; set; }
+    public string PrincipalId { get; set; } = "";
+    public string AgentId { get; set; } = "";
+    public string Merchant { get; set; } = "";
+    public string Purpose { get; set; } = "";
+    public string PaymentMethodId { get; set; } = "";
+    public decimal PerTransactionLimit { get; set; }
+    public decimal? DailyLimit { get; set; }
+    public decimal? WeeklyLimit { get; set; }
+    public decimal? MonthlyLimit { get; set; }
+    public string Currency { get; set; } = "";
+    public string TaskParametersJson { get; set; } = "{}";
+    public string AboveLimit { get; set; } = "Block";
+    public string Status { get; set; } = "Active";
+    public string? SupersedesMandateId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset EffectiveFrom { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public long ConcurrencyVersion { get; set; } = 1;
+}
+
+public sealed class ConsumerPaymentMethodEntity
+{
+    public string PaymentMethodId { get; set; } = "";
+    public string PrincipalId { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string ProviderToken { get; set; } = "";
+    public string CardBrand { get; set; } = "";
+    public string Last4 { get; set; } = "";
+    public int ExpiryMonth { get; set; }
+    public int ExpiryYear { get; set; }
+    public string Status { get; set; } = "Active";
+    public long Version { get; set; } = 1;
+}

@@ -16,13 +16,72 @@ using AgentTrust.Mandates;
 using AgentTrust.PaymentMethods;
 using AgentTrust.Scheduling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.IdentityModel.Tokens;
+using AgentTrust.Api.Authentication;
+using AgentTrust.Api;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
-builder.Services.AddAuthentication();
-builder.Services.AddAuthorization();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "AgentTrust API",
+        Version = "v1",
+        Description = "Financial-agent intelligence and deterministic trust-boundary API."
+    });
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Paste the JWT access token only; Swagger adds the Bearer prefix."
+    });
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecurityScheme
+        {
+            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+        }] = Array.Empty<string>()
+    });
+});
+var authority = builder.Configuration["Authentication:Authority"];
+var audience = builder.Configuration["Authentication:Audience"];
+if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")
+    && (string.IsNullOrWhiteSpace(authority) || string.IsNullOrWhiteSpace(audience)))
+    throw new InvalidOperationException("Authentication:Authority and Authentication:Audience are required outside Development/Testing.");
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+{
+    options.Authority = authority;
+    options.Audience = audience;
+    options.RequireHttpsMetadata = builder.Configuration.GetValue("Authentication:RequireHttpsMetadata", true);
+    options.MapInboundClaims = false;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true, ValidIssuer = authority ?? "urn:agenttrust:not-configured",
+        ValidateAudience = true, ValidAudience = audience ?? "agenttrust-not-configured",
+        ValidateIssuerSigningKey = true, RequireSignedTokens = true, ValidateLifetime = true,
+        NameClaimType = "name", RoleClaimType = "role", ClockSkew = TimeSpan.FromMinutes(2)
+    };
+});
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Consumer", policy => policy.RequireAuthenticatedUser().AddRequirements(new StablePrincipalRequirement()));
+    options.AddPolicy("StepUp", policy => policy.RequireAuthenticatedUser()
+        .AddRequirements(new StablePrincipalRequirement(), new StepUpRequirement()));
+    options.AddPolicy("AuditAdmin", policy => policy.RequireAuthenticatedUser().RequireRole("audit.read"));
+});
+builder.Services.AddScoped<IAuthorizationHandler, StablePrincipalHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, StepUpHandler>();
 
 // OpenAI key/model: secret configuration ("OpenAI:ApiKey"/"OpenAI:Model") takes priority over
 // OPENAI_API_KEY/OPENAI_MODEL. Credentials must not be stored in appsettings files.
@@ -75,6 +134,7 @@ if (!string.IsNullOrWhiteSpace(sqlServerConnectionString) || !string.IsNullOrWhi
     builder.Services.AddScoped<IOutcomeStore, EfOutcomeStore>();
     builder.Services.AddScoped<ISemanticCaseStore, EfSemanticCaseStore>();
 }
+
 else
 {
     // No database configured: fall back to process-wide in-memory stores so the API is still
@@ -98,20 +158,46 @@ else
     builder.Services.AddSingleton<ISemanticCaseStore, InMemorySemanticCaseStore>();
 }
 
-builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
-builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>();
+if (connectionString is not null)
+{
+    builder.Services.AddIdentityCore<ApplicationUser>(options =>
+    {
+        options.User.RequireUniqueEmail = false;
+        options.Lockout.MaxFailedAccessAttempts = 5;
+    }).AddUserStore<EfApplicationUserStore>();
+    builder.Services.AddScoped<IClaimsTransformation, ExternalIdentityClaimsTransformation>();
+}
 
-// Consumer commerce pilot. Stores remain in-memory until the dedicated consumer schema migration
-// is enabled; no raw payment credentials or retailer passwords are accepted by these services.
-builder.Services.AddSingleton<IConsumerTaskStore, InMemoryConsumerTaskStore>();
-builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
-builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
-builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();
-builder.Services.AddSingleton<IMandateUsageTracker, InMemoryMandateUsageTracker>();
-builder.Services.AddSingleton<IOneOffAuthorisationStore, InMemoryOneOffAuthorisationStore>();
-builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
-builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
-builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
+builder.Services.AddScoped<IPaymentAdapter, MockPaymentAdapter>();
+if (connectionString is not null)
+{
+    builder.Services.AddScoped<IPaymentAttemptStore, EfPaymentAttemptStore>();
+    builder.Services.AddScoped<IConsumerTaskStore, EfConsumerTaskStore>();
+    builder.Services.AddScoped<IConnectedServiceStore, EfConnectedServiceStore>();
+    builder.Services.AddScoped<IPurchaseExecutionStore, EfPurchaseExecutionStore>();
+    builder.Services.AddScoped<IMandateStore, EfMandateStore>();
+    builder.Services.AddScoped<IMandateUsageTracker, EfMandateUsageTracker>();
+    builder.Services.AddScoped<IOneOffAuthorisationStore, EfOneOffAuthorisationStore>();
+    builder.Services.AddScoped<IScheduledOccurrenceStore, EfScheduledOccurrenceStore>();
+    builder.Services.AddScoped<IPaymentMethodStore, EfPaymentMethodStore>();
+    builder.Services.AddScoped<IPurchaseAuditSink, EfPurchaseAuditSink>();
+    builder.Services.AddScoped<ICommerceDurability, EfCommerceDurability>();
+    builder.Services.AddHostedService<ConsumerPilotWorker>();
+}
+else
+{
+    builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>();
+    builder.Services.AddSingleton<IConsumerTaskStore, InMemoryConsumerTaskStore>();
+    builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
+    builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
+    builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();
+    builder.Services.AddSingleton<IMandateUsageTracker, InMemoryMandateUsageTracker>();
+    builder.Services.AddSingleton<IOneOffAuthorisationStore, InMemoryOneOffAuthorisationStore>();
+    builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
+    builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
+    builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
+    builder.Services.AddSingleton<ICommerceDurability, NullCommerceDurability>();
+}
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),
     builder.Configuration.GetValue("LivePurchase:MaxPilotAmountGbp", 5m),
@@ -125,7 +211,7 @@ builder.Services.AddSingleton<IPurchaseAuthorisationService>(_ =>
     if (!builder.Environment.IsDevelopment()) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development.");
     return new HmacPurchaseAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 });
-builder.Services.AddSingleton<IPlatformPaymentProcessor>(sp =>
+builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
 {
     var provider = builder.Configuration["Payments:Provider"] ?? "Mock";
     if (!provider.Equals("Stripe", StringComparison.OrdinalIgnoreCase)) return new MockPlatformPaymentProcessor();
@@ -134,7 +220,7 @@ builder.Services.AddSingleton<IPlatformPaymentProcessor>(sp =>
         ?? Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY") ?? "",
         new StripePaymentOptions(mode), sp.GetRequiredService<IPaymentMethodStore>());
 });
-builder.Services.AddSingleton<DemoGroceryConnector>();
+builder.Services.AddScoped<DemoGroceryConnector>();
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext
@@ -222,6 +308,14 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "AgentTrust API v1");
+        options.RoutePrefix = "swagger";
+        options.DisplayRequestDuration();
+        options.EnableTryItOutByDefault();
+    });
 }
 
 app.UseAuthentication();

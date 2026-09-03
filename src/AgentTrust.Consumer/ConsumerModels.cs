@@ -37,6 +37,7 @@ public interface IConsumerTaskStore
     void Save(ConsumerPurchaseTask task);
     ConsumerPurchaseTask? FindOwned(string taskId, string principalId);
     IReadOnlyList<ConsumerPurchaseTask> FindByPrincipal(string principalId);
+    IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50);
 }
 public interface IConnectedServiceStore
 {
@@ -57,6 +58,7 @@ public sealed class InMemoryConsumerTaskStore : IConsumerTaskStore
     public void Save(ConsumerPurchaseTask task) { lock (_gate) _items[task.TaskId] = task; }
     public ConsumerPurchaseTask? FindOwned(string id, string principal) { lock (_gate) return _items.GetValueOrDefault(id) is { } t && t.PrincipalId == principal ? t : null; }
     public IReadOnlyList<ConsumerPurchaseTask> FindByPrincipal(string principal) { lock (_gate) return _items.Values.Where(t => t.PrincipalId == principal).ToList(); }
+    public IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50) { lock (_gate) return _items.Values.Where(t => t.Status == ConsumerTaskStatus.Active && t.NextExecutionAt <= asOf).OrderBy(t => t.NextExecutionAt).Take(maximum).ToList(); }
 }
 public sealed class InMemoryConnectedServiceStore : IConnectedServiceStore
 {

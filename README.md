@@ -1144,14 +1144,24 @@ After that, `Migrate()` sees `InitialCreate` as already applied and only runs fu
 - Store interfaces (`IAgentRegistry`, etc.) are synchronous; the EF-Core implementations call
   EF Core's sync APIs rather than being async end-to-end. Fine for this prototype's throughput,
   worth revisiting before any real load.
-- Consumer endpoints require authorization and enforce ownership from the authenticated
-  `NameIdentifier`, but the repository deliberately ships no permissive default authentication
-  handler. A deployment must configure its real OIDC/JWT identity provider before those routes
-  become usable.
-- Consumer task, connection, purchase-execution, authorisation and lifecycle-audit stores are
-  currently process-local for the controlled pilot. Durable EF mappings, provider-specific
-  migrations, transactionally coupled reservation/checkout state, webhook reconciliation and a
-  distributed idempotency store remain mandatory before a genuine live-money pilot.
+- Consumer endpoints use JWT bearer validation against a configured OIDC authority/audience.
+  A validated `(iss, sub)` is linked to a durable ASP.NET Core Identity user and mapped to the
+  platform's stable `PrincipalId`; unlinked identities fail the `Consumer` policy. Set
+  `Authentication:AutoProvisionUsers=true` only when controlled just-in-time provisioning is
+  intended. Production startup fails if the OIDC authority or audience is absent.
+- High-risk consumer endpoints use the `StepUp` policy. It accepts only signed token `amr=mfa`
+  or a configured `acr` value together with a recent `auth_time`; request-body booleans cannot
+  satisfy step-up. Configure `Authentication:StepUp:MaxAgeMinutes` and
+  `Authentication:StepUp:AllowedAcrValues` for the selected identity provider.
+- Consumer durable-state, Identity, mandate and tokenised-payment-method schemas have
+  provider-specific SQL Server/PostgreSQL migrations. When a connection string is configured,
+  the consumer runtime uses EF stores, database-unique occurrence/payment keys, durable checkout
+  records, signed Stripe webhooks, and an opt-in scheduler/recovery/reconciliation worker. Set
+  `Stripe:WebhookSecret` from the Stripe CLI/Dashboard and explicitly enable
+  `ConsumerPilot:Worker:Enabled` on only the intended worker deployment. The worker is off by
+  default. Mandate creation, task authority binding, payment-method setup, live pilot execution,
+  and approval require recent trusted step-up evidence; receipts and purchase audit are
+  principal-owned reads.
 - The cross-model harness's "degraded" profile is a hand-authored scripted variant, not a
   second real model — meaningful multi-model comparison needs a second live connector
   (Azure OpenAI, Anthropic via an OpenAI-compatible shim, etc.) configured through

@@ -28,6 +28,7 @@ public sealed class AgentPurchaseOrchestrator
     private readonly TrustFramework _trust; private readonly IPurchaseAuthorisationService _authorisations;
     private readonly IPurchaseAuditSink _audit; private readonly LivePurchaseGate _liveGate;
     private readonly IOneOffAuthorisationStore _oneOffs;
+    private readonly ICommerceDurability _durability;
     private readonly object _gate = new();
     private readonly Dictionary<string, PendingPurchase> _pending = new();
     private readonly Dictionary<string, string> _intentHashes = new();
@@ -39,11 +40,12 @@ public sealed class AgentPurchaseOrchestrator
         IMandateStore mandates, IMandateUsageTracker usage, IPaymentMethodStore paymentMethods,
         IDelegatedAuthorityStore authorities, TrustFramework trust,
         IPurchaseAuthorisationService authorisations, IPurchaseAuditSink audit, LivePurchaseGate liveGate,
-        IOneOffAuthorisationStore? oneOffs = null)
+        IOneOffAuthorisationStore? oneOffs = null, ICommerceDurability? durability = null)
     { _tasks = tasks; _executions = executions; _mandates = mandates; _usage = usage;
       _paymentMethods = paymentMethods; _authorities = authorities; _trust = trust;
       _authorisations = authorisations; _audit = audit; _liveGate = liveGate;
-      _oneOffs = oneOffs ?? new InMemoryOneOffAuthorisationStore(); }
+      _oneOffs = oneOffs ?? new InMemoryOneOffAuthorisationStore();
+      _durability = durability ?? new NullCommerceDurability(); }
 
     public async Task<PurchaseOrchestrationResult> RunAsync(string taskId, string authenticatedPrincipalId,
         DateTimeOffset scheduledFor, ICommerceConnector connector, LiveExecutionContext liveContext,
@@ -98,6 +100,7 @@ public sealed class AgentPurchaseOrchestrator
                 task.Preferences.RequestedDeliveryWindow, task.PaymentMethodId, DateTimeOffset.UtcNow,
                 quote.ExpiresAt, intentId);
             lock (_gate) _intentHashes[intentId] = PurchaseIntentCanonicalizer.Hash(intent);
+            _durability.SaveIntent(intent, $"pex_{intentId}", mandate.Version);
             Update(intentId, PurchaseExecutionState.Quoted, []);
             Audit("QuoteReceived", intentId, task.PrincipalId, null); Audit("PurchaseIntentCreated", intentId, task.PrincipalId, null);
 
@@ -175,8 +178,10 @@ public sealed class AgentPurchaseOrchestrator
         Audit("TrustApproved", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
         var auth = _authorisations.Issue(intent, tx.TransactionId, mandate.Version,
             outcome.PolicyDecision.PolicyVersion, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+        _durability.SaveAuthorisation(auth);
         Update(intent.PurchaseIntentId, PurchaseExecutionState.Authorised, []); Audit("PurchaseAuthorisationIssued", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
         await connector.PrepareCheckoutAsync(intent, cancellationToken);
+        _durability.SaveCheckout(intent, "Submitted");
         Update(intent.PurchaseIntentId, PurchaseExecutionState.CheckoutSubmitted, []); Audit("PaymentSubmitted", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
         var result = await connector.ExecutePurchaseAsync(intent, auth, cancellationToken);
         var state = result.Status switch { ConnectorPurchaseStatus.Succeeded => PurchaseExecutionState.Purchased,
@@ -187,6 +192,7 @@ public sealed class AgentPurchaseOrchestrator
         else if (state == PurchaseExecutionState.Failed) _usage.Release(reservationId);
         Update(intent.PurchaseIntentId, state, result.FailureReason is null ? [] : [result.FailureReason], result.ProviderReference, result.RequiredAction, tx.TransactionId);
         Audit(state == PurchaseExecutionState.Purchased ? "PurchaseCompleted" : state == PurchaseExecutionState.RequiresAction ? "RequiresAction" : "PurchaseFailed", intent.PurchaseIntentId, task.PrincipalId, tx.TransactionId);
+        if (result.Receipt is not null) _durability.SaveReceipt(result.Receipt, task.PrincipalId);
         return new PurchaseOrchestrationResult(_executions.FindByIntent(intent.PurchaseIntentId)!, intent, auth, result.Receipt);
     }
 

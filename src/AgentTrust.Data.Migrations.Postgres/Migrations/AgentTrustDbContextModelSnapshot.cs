@@ -58,6 +58,96 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("Agents");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.ApplicationUser", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("AccessFailedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("EmailConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ExternalIssuer")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ExternalSubject")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("LockoutEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("LockoutEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NormalizedEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("NormalizedUserName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("PasswordHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PhoneNumber")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("PhoneNumberConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("SecurityStamp")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("TwoFactorEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("UserName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NormalizedEmail");
+
+                    b.HasIndex("NormalizedUserName")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId")
+                        .IsUnique();
+
+                    b.HasIndex("ExternalIssuer", "ExternalSubject")
+                        .IsUnique();
+
+                    b.ToTable("AspNetUsers", (string)null);
+                });
+
             modelBuilder.Entity("AgentTrust.Data.ApprovalRequestEntity", b =>
                 {
                     b.Property<string>("ApprovalId")
@@ -295,6 +385,55 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasIndex("LatestStatus", "UpdatedAt");
 
                     b.ToTable("ConsumerPaymentAttempts", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentMethodEntity", b =>
+                {
+                    b.Property<string>("PaymentMethodId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CardBrand")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ExpiryMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ExpiryYear")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Last4")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderToken")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PaymentMethodId");
+
+                    b.HasIndex("PrincipalId", "Status");
+
+                    b.HasIndex("Provider", "ProviderToken")
+                        .IsUnique();
+
+                    b.ToTable("ConsumerPaymentMethods");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.ConsumerProfileEntity", b =>
@@ -535,6 +674,91 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasKey("TransactionId");
 
                     b.ToTable("EvidenceManifests");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>
+                {
+                    b.Property<string>("MandateId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("AboveLimit")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("DailyLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset>("EffectiveFrom")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Merchant")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("MonthlyLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("PaymentMethodId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("PerTransactionLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SupersedesMandateId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TaskParametersJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("WeeklyLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("MandateId", "Version");
+
+                    b.HasIndex("AgentId", "Status");
+
+                    b.HasIndex("PrincipalId", "Status");
+
+                    b.ToTable("FinancialMandates");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>
@@ -1498,6 +1722,40 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasKey("TransactionId");
 
                     b.ToTable("TransactionIntents");
+                });
+
+            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
+                {
+                    b.Property<string>("LoginProvider")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ProviderKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ProviderDisplayName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("LoginProvider", "ProviderKey");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("AspNetUserLogins", (string)null);
+                });
+
+            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
+                {
+                    b.HasOne("AgentTrust.Data.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

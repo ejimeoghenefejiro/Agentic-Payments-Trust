@@ -5,6 +5,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
 using AgentTrust.Intelligence.Investigation;
 using Xunit;
 
@@ -41,9 +46,18 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
                 ["ConnectionStrings:SqlServer"] = null,
                 ["ConnectionStrings:Postgres"] = null
             }));
+            builder.ConfigureServices(services => services.AddAuthentication("IntegrationTest")
+                .AddScheme<AuthenticationSchemeOptions, IntegrationTestAuthHandler>("IntegrationTest", _ => { }));
         });
         _factory = hermeticFactory;
         _client = hermeticFactory.CreateClient();
+    }
+
+    [Fact]
+    public async Task ConsumerRoutesRejectRequestsWithoutValidatedBearerIdentity()
+    {
+        var response = await _client.GetAsync("/api/consumer/tasks");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
@@ -134,6 +148,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var getTransaction = await _client.GetAsync($"/api/transactions/{txId}");
         Assert.Equal(HttpStatusCode.OK, getTransaction.StatusCode);
 
+        _client.DefaultRequestHeaders.Add("X-Test-Principal", principalId);
+        _client.DefaultRequestHeaders.Add("X-Test-Roles", "audit.read");
         var auditGet = await _client.GetAsync($"/api/audit/{txId}");
         Assert.Equal(HttpStatusCode.OK, auditGet.StatusCode);
 
@@ -190,6 +206,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("Escalate", submitBody.GetProperty("decision").GetString());
         Assert.Equal("NotAttempted", submitBody.GetProperty("paymentStatus").GetString());
 
+        _client.DefaultRequestHeaders.Add("X-Test-Principal", principalId);
+        _client.DefaultRequestHeaders.Add("X-Test-Mfa", "true");
         var approve = await _client.PostAsJsonAsync($"/api/approvals/{txId}", new { approve = true, approver = "supervisor@example.com", reason = "confirmed" });
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
         var approveBody = await approve.Content.ReadFromJsonAsync<JsonElement>();
@@ -198,6 +216,22 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 
         var secondApprove = await _client.PostAsJsonAsync($"/api/approvals/{txId}", new { approve = true, approver = "someone_else@example.com", reason = "duplicate attempt" });
         Assert.Equal(HttpStatusCode.Conflict, secondApprove.StatusCode);
+    }
+
+    private sealed class IntegrationTestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
+    {
+        public IntegrationTestAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
+            : base(options, logger, encoder) { }
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            if (!Request.Headers.TryGetValue("X-Test-Principal", out var principal))
+                return Task.FromResult(AuthenticateResult.NoResult());
+            var claims = new List<Claim> { new(AgentTrust.Api.Authentication.AgentTrustClaimTypes.PrincipalId, principal.ToString()) };
+            if (Request.Headers["X-Test-Mfa"] == "true")
+            { claims.Add(new("amr", "mfa")); claims.Add(new("auth_time", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())); }
+            foreach (var role in Request.Headers["X-Test-Roles"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries)) claims.Add(new(ClaimTypes.Role, role));
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name)), Scheme.Name)));
+        }
     }
 
     [Fact]
