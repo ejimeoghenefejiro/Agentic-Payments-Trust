@@ -57,6 +57,25 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("value-wraps",document.RootElement.GetProperty("results").GetProperty("wraps")[0].GetProperty("productId").GetString());
         Assert.Equal(["search_catalogue_batch"],plugin.ToolsUsed);
     }
+    [Fact]
+    public void PurchasePlanningPlugin_DiscoversMealIngredientsBeforeMerchantResolution()
+    {
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin([],40);
+        using var document=JsonDocument.Parse(plugin.DiscoverRecipe("chicken wraps"));
+        var essential=document.RootElement.GetProperty("essential").EnumerateArray().Select(x=>x.GetString()!).ToArray();
+        Assert.Equal(["chicken","wraps","lettuce","tomato","sauce"],essential);
+        Assert.Contains("discover_recipe",plugin.ToolsUsed);
+    }
+    [Fact]
+    public void PurchasePlanGuard_CorrectsOnlyAnEvidenceBackedBudgetContradiction()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("wraps","Wraps",5m,"GBP",10,new HashSet<string>{"wraps"})];
+        AgentTrust.Api.PurchasePlanningPlugin.ClearCalls();var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40);
+        plugin.Price("[{\"searchTerm\":\"wraps\",\"quantity\":1}]");
+        var plan=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Wraps","The £7.50 total exceeds the £20 budget",20,"GBP",[new("wraps",1)],[],7.50m,["price_basket"]);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.HasContradictoryBudgetConclusion(plan,catalogue,AgentTrust.Api.PurchasePlanningPlugin.LastCalls));
+        Assert.False(AgentTrust.Api.PurchasePlanGuard.HasContradictoryBudgetConclusion(plan with{MaximumAmount=7},catalogue,AgentTrust.Api.PurchasePlanningPlugin.LastCalls));
+    }
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;
 
@@ -117,8 +136,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.Equal(12.75m,lowBudget.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(lowBudget.GetProperty("planning").GetProperty("questions").GetArrayLength()>0);
             var lowTools=lowBudget.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()).ToArray();Assert.Contains("search_catalogue_batch",lowTools);Assert.Contains("price_basket",lowTools);
             Assert.False(lowBudget.GetProperty("paymentAttempted").GetBoolean());Assert.False(lowBudget.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(lowBudget.TryGetProperty("taskId",out _));
-            var conversationId=lowBudget.GetProperty("planning").GetProperty("conversationId").GetString();Assert.False(string.IsNullOrWhiteSpace(conversationId));
-            using var answer=new StringContent("I already have chicken, sauce, lettuce and tomatoes.",System.Text.Encoding.UTF8,"text/plain");var resumed=await _client.PostAsync($"/api/consumer/purchases/request?conversationId={Uri.EscapeDataString(conversationId!)}",answer);
+            Assert.False(lowBudget.GetProperty("planning").TryGetProperty("conversationId",out _));
+            using var answer=new StringContent("I already have chicken, sauce, lettuce and tomatoes.",System.Text.Encoding.UTF8,"text/plain");var resumed=await _client.PostAsync("/api/consumer/purchases/request",answer);
             Assert.Equal(HttpStatusCode.OK,resumed.StatusCode);var resumedBody=await resumed.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("READY",resumedBody.GetProperty("planning").GetProperty("status").GetString());Assert.Equal(4.30m,resumedBody.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(resumedBody.GetProperty("trustBoundaryInvoked").GetBoolean());
         }
         using(var reviewRequest=new StringContent("Show me the basket before paying. I want to make chicken wraps within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))
@@ -126,8 +145,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             var proposedResponse=await _client.PostAsync("/api/consumer/purchases/request",reviewRequest);Assert.Equal(HttpStatusCode.OK,proposedResponse.StatusCode);
             var proposed=await proposedResponse.Content.ReadFromJsonAsync<JsonElement>();var planning=proposed.GetProperty("planning");
             Assert.Equal("PROPOSE",planning.GetProperty("interactionDecision").GetString());Assert.False(proposed.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(proposed.GetProperty("paymentAttempted").GetBoolean());
-            var reviewConversation=planning.GetProperty("conversationId").GetString()!;
-            using var proceed=new StringContent("Use your best judgement and proceed.",System.Text.Encoding.UTF8,"text/plain");var executedResponse=await _client.PostAsync($"/api/consumer/purchases/request?conversationId={Uri.EscapeDataString(reviewConversation)}",proceed);
+            Assert.False(planning.TryGetProperty("conversationId",out _));
+            using var proceed=new StringContent("Use your best judgement and proceed.",System.Text.Encoding.UTF8,"text/plain");var executedResponse=await _client.PostAsync("/api/consumer/purchases/request",proceed);
             Assert.Equal(HttpStatusCode.OK,executedResponse.StatusCode);var executed=await executedResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("EXECUTE",executed.GetProperty("planning").GetProperty("interactionDecision").GetString());Assert.True(executed.GetProperty("trustBoundaryInvoked").GetBoolean());
         }
         using(var naturalRequest=new StringContent("I want to make chicken wraps. Get all required ingredients within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))

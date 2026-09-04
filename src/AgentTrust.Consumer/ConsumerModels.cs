@@ -44,6 +44,7 @@ public interface IConsumerPlanningStore
 {
     ConsumerPlanningConversation Create(string principalId,string objective,string stateJson,DateTimeOffset now);
     ConsumerPlanningConversation? FindOwned(string conversationId,string principalId);
+    ConsumerPlanningConversation? FindLatestOpen(string principalId,DateTimeOffset notBefore);
     void Save(ConsumerPlanningConversation conversation);
     void Append(ConsumerPlanningTurn turn);
     IReadOnlyList<ConsumerPlanningTurn> Turns(string conversationId);
@@ -102,6 +103,7 @@ public sealed class InMemoryConsumerPlanningStore:IConsumerPlanningStore
     private readonly object _gate=new();private readonly Dictionary<string,ConsumerPlanningConversation> _conversations=new();private readonly List<ConsumerPlanningTurn> _turns=[];private readonly List<ConsumerProductReservation> _reservations=[];
     public ConsumerPlanningConversation Create(string principal,string objective,string state,DateTimeOffset now){lock(_gate){var item=new ConsumerPlanningConversation($"conversation_{Guid.NewGuid():N}",principal,objective,"INVESTIGATING",state,now,now);_conversations[item.ConversationId]=item;return item;}}
     public ConsumerPlanningConversation? FindOwned(string id,string principal){lock(_gate)return _conversations.GetValueOrDefault(id)is{} x&&x.PrincipalId==principal?x:null;}
+    public ConsumerPlanningConversation? FindLatestOpen(string principal,DateTimeOffset notBefore){lock(_gate)return _conversations.Values.Where(x=>x.PrincipalId==principal&&x.UpdatedAt>=notBefore&&x.Status is "INVESTIGATING" or "NEEDS_INPUT" or "PROPOSE").OrderByDescending(x=>x.UpdatedAt).FirstOrDefault();}
     public void Save(ConsumerPlanningConversation item){lock(_gate)_conversations[item.ConversationId]=item;}
     public void Append(ConsumerPlanningTurn turn){lock(_gate){if(_turns.All(x=>x.TurnId!=turn.TurnId))_turns.Add(turn);}}
     public IReadOnlyList<ConsumerPlanningTurn> Turns(string id){lock(_gate)return _turns.Where(x=>x.ConversationId==id).OrderBy(x=>x.Sequence).ToList();}

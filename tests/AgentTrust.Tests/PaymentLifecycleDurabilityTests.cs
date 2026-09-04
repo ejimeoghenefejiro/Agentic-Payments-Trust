@@ -73,6 +73,7 @@ public sealed class PaymentLifecycleDurabilityTests : IDisposable
         store.SavePolicy(new("principal_1","AUTO_WHEN_SAFE",true,true,now));
         _db.ChangeTracker.Clear();var reloaded=store.FindOwned(conversation.ConversationId,"principal_1");
         Assert.NotNull(reloaded);Assert.Contains("sauce",reloaded!.StateJson);Assert.Single(store.Turns(conversation.ConversationId));Assert.Single(store.Reservations(conversation.ConversationId));Assert.Equal("vegetarian",store.Preferences("principal_1")["diet"]);
+        Assert.Equal(conversation.ConversationId,store.FindLatestOpen("principal_1",now.AddMinutes(-1))?.ConversationId);
         Assert.True(store.GetPolicy("principal_1").AskBeforeSubstitutions);Assert.True(store.GetPolicy("principal_1").ShowBasketBeforePayment);
         Assert.Null(store.FindOwned(conversation.ConversationId,"other_principal"));
     }

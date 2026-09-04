@@ -91,13 +91,14 @@ public sealed class ConsumerController : ControllerBase
     [HttpGet("purchases")] public ActionResult<IReadOnlyList<PurchaseExecution>> Purchases() => Ok(_purchases.FindByPrincipal(PrincipalId()));
     /// <summary>Submit one plain-language shopping request. The agent plans the basket; only the deterministic trust layer can authorise payment.</summary>
     [HttpPost("purchases/request"),Authorize(Policy="StepUp"),Consumes("text/plain")]
-    public async Task<ActionResult<object>> RequestPurchase([FromBody]string instruction,[FromQuery]string? conversationId,CancellationToken token)
+    public async Task<ActionResult<object>> RequestPurchase([FromBody]string instruction,CancellationToken token)
     {
         var principal=PrincipalId();var now=DateTimeOffset.UtcNow;var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
-        var catalogue=await _connector.SearchProductsAsync("",token);ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(principal,conversationId,instruction,catalogue,token);}catch(UnauthorizedAccessException){return NotFound();}
+        var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");var managedConversationId=startsNew?null:_planning.FindLatestOpen(principal,now.AddMinutes(-30))?.ConversationId;
+        var catalogue=await _connector.SearchProductsAsync("",token);ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(principal,managedConversationId,instruction,catalogue,token);}catch(UnauthorizedAccessException){return NotFound();}
         if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
-        var holds=_planning.Reservations(plan.ConversationId!);if(holds.Count!=plan.Items.Count)return Conflict(new{code="PRODUCT_RESERVATION_INCOMPLETE",conversationId=plan.ConversationId});
-        foreach(var hold in holds){var current=await _connector.GetProductAsync(hold.ProductId,token);if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)return Conflict(new{code="PRODUCT_REVALIDATION_REQUIRED",conversationId=plan.ConversationId,productId=hold.ProductId});}
+        var holds=_planning.Reservations(plan.ConversationId!);if(holds.Count!=plan.Items.Count)return Conflict(new{code="PRODUCT_RESERVATION_INCOMPLETE"});
+        foreach(var hold in holds){var current=await _connector.GetProductAsync(hold.ProductId,token);if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)return Conflict(new{code="PRODUCT_REVALIDATION_REQUIRED",productId=hold.ProductId});}
         var mandate=_mandates.FindByPrincipal(principal).Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase)&&string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase)&&x.PerTransactionLimit>=plan.MaximumAmount)
             .OrderBy(x=>x.PerTransactionLimit).FirstOrDefault();
         if(mandate is null)return UnprocessableEntity(new{code="NO_SUITABLE_ACTIVE_MANDATE",message="Create an active grocery mandate whose per-transaction limit covers the requested budget."});
@@ -146,6 +147,7 @@ public sealed class ConsumerController : ControllerBase
         return new(steps.All(x=>x.Complete),steps.Where(x=>!x.Complete).ToArray(),steps);
     }
     private static string NormalizeMerchant(string value)=>value.Equals("demo-grocery",StringComparison.OrdinalIgnoreCase)?"GroceryDemo":value;
+    private static bool ContainsAny(string value,params string[] phrases)=>phrases.Any(x=>value.Contains(x,StringComparison.OrdinalIgnoreCase));
     private static DateTimeOffset NextOccurrence(TaskScheduleRequest schedule,string timezone,DateTimeOffset now){if(!schedule.Frequency.Equals("Weekly",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Only Weekly is supported.");var zone=TimeZoneInfo.FindSystemTimeZoneById(timezone);var local=TimeZoneInfo.ConvertTime(now,zone);if(!Enum.TryParse<DayOfWeek>(schedule.DayOfWeek,true,out var day)||!TimeOnly.TryParse(schedule.LocalTime,out var time))throw new ArgumentException("Invalid weekly schedule.");var days=((int)day-(int)local.DayOfWeek+7)%7;var candidate=local.Date.AddDays(days).Add(time.ToTimeSpan());if(candidate<=local.DateTime)candidate=candidate.AddDays(7);return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(candidate,DateTimeKind.Unspecified),zone);}
     private sealed class RejectRawCardTokenizationProvider : ICardTokenizationProvider
     { public TokenizationResult Tokenize(string cardNumber, string cvv, int expiryMonth, int expiryYear) => throw new NotSupportedException("Raw card data is not accepted by this endpoint."); }
