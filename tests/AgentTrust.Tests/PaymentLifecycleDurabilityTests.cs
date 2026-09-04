@@ -63,6 +63,20 @@ public sealed class PaymentLifecycleDurabilityTests : IDisposable
         Assert.Equal("receipt_1", receipt.ReceiptId);
     }
 
+    [Fact]
+    public void PlanningConversation_TurnsConstraintsAndProductHoldsAreDurable()
+    {
+        var store=new EfConsumerPlanningStore(_db);var now=DateTimeOffset.UtcNow;var conversation=store.Create("principal_1","Make wraps","{\"inventoryAtHome\":\"sauce\"}",now);
+        store.Append(new("turn_1",conversation.ConversationId,1,"user","message","I have sauce",null,null,null,now));
+        store.Remember("principal_1","diet","vegetarian",conversation.ConversationId,now);
+        store.ReplaceReservations(conversation.ConversationId,[new("hold_1",conversation.ConversationId,"wraps",1,1.80m,"GBP","Reserved",now,now.AddMinutes(5))]);
+        store.SavePolicy(new("principal_1","AUTO_WHEN_SAFE",true,true,now));
+        _db.ChangeTracker.Clear();var reloaded=store.FindOwned(conversation.ConversationId,"principal_1");
+        Assert.NotNull(reloaded);Assert.Contains("sauce",reloaded!.StateJson);Assert.Single(store.Turns(conversation.ConversationId));Assert.Single(store.Reservations(conversation.ConversationId));Assert.Equal("vegetarian",store.Preferences("principal_1")["diet"]);
+        Assert.True(store.GetPolicy("principal_1").AskBeforeSubstitutions);Assert.True(store.GetPolicy("principal_1").ShowBasketBeforePayment);
+        Assert.Null(store.FindOwned(conversation.ConversationId,"other_principal"));
+    }
+
     private static PurchaseIntent Intent() => new(
         "intent_1", "principal_1", "agent_1", "mandate_1", "task_1", "merchant_1", "Merchant", "GBP",
         [new BasketItem("product_1", "Milk", 1, 2.50m, 2.50m, false)], 2.50m, 0m, 2.50m,

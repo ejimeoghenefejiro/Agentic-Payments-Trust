@@ -42,6 +42,11 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<IdentityUserLogin<string>> ApplicationUserLogins => Set<IdentityUserLogin<string>>();
     public DbSet<FinancialMandateEntity> FinancialMandates => Set<FinancialMandateEntity>();
     public DbSet<ConsumerPaymentMethodEntity> ConsumerPaymentMethods => Set<ConsumerPaymentMethodEntity>();
+    public DbSet<ConsumerPlanningConversationEntity> ConsumerPlanningConversations=>Set<ConsumerPlanningConversationEntity>();
+    public DbSet<ConsumerPlanningTurnEntity> ConsumerPlanningTurns=>Set<ConsumerPlanningTurnEntity>();
+    public DbSet<ConsumerProductReservationEntity> ConsumerProductReservations=>Set<ConsumerProductReservationEntity>();
+    public DbSet<ConsumerPreferenceMemoryEntity> ConsumerPreferenceMemories=>Set<ConsumerPreferenceMemoryEntity>();
+    public DbSet<ConsumerConversationPolicyEntity> ConsumerConversationPolicies=>Set<ConsumerConversationPolicyEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -244,6 +249,13 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasIndex(x => x.ProviderPaymentId).IsUnique(); b.HasIndex(x => new { x.PrincipalId, x.PurchasedAt });
             Money(b.Property(x => x.TotalAmount));
         });
+        Configure<ConsumerPlanningConversationEntity>(modelBuilder,x=>x.ConversationId);
+        modelBuilder.Entity<ConsumerPlanningConversationEntity>(b=>b.HasIndex(x=>new{x.PrincipalId,x.UpdatedAt}));
+        modelBuilder.Entity<ConsumerPlanningTurnEntity>(b=>{b.HasKey(x=>x.TurnId);b.HasIndex(x=>new{x.ConversationId,x.Sequence}).IsUnique();});
+        Configure<ConsumerProductReservationEntity>(modelBuilder,x=>x.ReservationId);
+        modelBuilder.Entity<ConsumerProductReservationEntity>(b=>{b.HasIndex(x=>new{x.ConversationId,x.ProductId}).IsUnique();b.HasIndex(x=>new{x.Status,x.ExpiresAt});Money(b.Property(x=>x.UnitPrice));});
+        Configure<ConsumerPreferenceMemoryEntity>(modelBuilder,x=>x.MemoryId);modelBuilder.Entity<ConsumerPreferenceMemoryEntity>(b=>b.HasIndex(x=>new{x.PrincipalId,x.Key}).IsUnique());
+        Configure<ConsumerConversationPolicyEntity>(modelBuilder,x=>x.PrincipalId);
 
         static void Configure<TEntity>(ModelBuilder builder,
             System.Linq.Expressions.Expression<Func<TEntity, object?>> key) where TEntity : class

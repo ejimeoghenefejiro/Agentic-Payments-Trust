@@ -327,6 +327,33 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("ConnectedServices");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.ConsumerConversationPolicyEntity", b =>
+                {
+                    b.Property<string>("PrincipalId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("AskBeforeSubstitutions")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("InteractionMode")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("ShowBasketBeforePayment")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PrincipalId");
+
+                    b.ToTable("ConsumerConversationPolicies");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentAttemptEntity", b =>
                 {
                     b.Property<string>("PaymentAttemptId")
@@ -436,6 +463,175 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .IsUnique();
 
                     b.ToTable("ConsumerPaymentMethods");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPlanningConversationEntity", b =>
+                {
+                    b.Property<string>("ConversationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Objective")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ConversationId");
+
+                    b.HasIndex("PrincipalId", "UpdatedAt");
+
+                    b.ToTable("ConsumerPlanningConversations");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPlanningTurnEntity", b =>
+                {
+                    b.Property<string>("TurnId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ToolInputJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ToolName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ToolOutputJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("TurnId");
+
+                    b.HasIndex("ConversationId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("ConsumerPlanningTurns");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPreferenceMemoryEntity", b =>
+                {
+                    b.Property<string>("MemoryId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("SourceConversationId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("MemoryId");
+
+                    b.HasIndex("PrincipalId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("ConsumerPreferenceMemories");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerProductReservationEntity", b =>
+                {
+                    b.Property<string>("ReservationId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ConversationId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProductId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ReservationId");
+
+                    b.HasIndex("ConversationId", "ProductId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.ToTable("ConsumerProductReservations");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.ConsumerProfileEntity", b =>

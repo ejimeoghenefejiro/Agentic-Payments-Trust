@@ -32,6 +32,29 @@ public sealed record PurchaseExecution(string ExecutionId, string TaskId, string
     string? ProviderReference, string? RequiredAction, IReadOnlyList<string> Reasons,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
+public sealed record ConsumerPlanningConversation(string ConversationId,string PrincipalId,string Objective,string Status,
+    string StateJson,DateTimeOffset CreatedAt,DateTimeOffset UpdatedAt,long Version=1);
+public sealed record ConsumerPlanningTurn(string TurnId,string ConversationId,int Sequence,string Role,string Kind,
+    string Content,string? ToolName,string? ToolInputJson,string? ToolOutputJson,DateTimeOffset CreatedAt);
+public sealed record ConsumerProductReservation(string ReservationId,string ConversationId,string ProductId,int Quantity,
+    decimal UnitPrice,string Currency,string Status,DateTimeOffset ReservedAt,DateTimeOffset ExpiresAt,long Version=1);
+public sealed record ConversationPolicy(string PrincipalId,string InteractionMode,bool AskBeforeSubstitutions,
+    bool ShowBasketBeforePayment,DateTimeOffset UpdatedAt,long Version=1);
+public interface IConsumerPlanningStore
+{
+    ConsumerPlanningConversation Create(string principalId,string objective,string stateJson,DateTimeOffset now);
+    ConsumerPlanningConversation? FindOwned(string conversationId,string principalId);
+    void Save(ConsumerPlanningConversation conversation);
+    void Append(ConsumerPlanningTurn turn);
+    IReadOnlyList<ConsumerPlanningTurn> Turns(string conversationId);
+    void ReplaceReservations(string conversationId,IReadOnlyList<ConsumerProductReservation> reservations);
+    IReadOnlyList<ConsumerProductReservation> Reservations(string conversationId);
+    IReadOnlyDictionary<string,string> Preferences(string principalId);
+    void Remember(string principalId,string key,string value,string sourceConversationId,DateTimeOffset now);
+    ConversationPolicy GetPolicy(string principalId);
+    void SavePolicy(ConversationPolicy policy);
+}
+
 public interface IConsumerTaskStore
 {
     void Save(ConsumerPurchaseTask task);
@@ -73,4 +96,20 @@ public sealed class InMemoryPurchaseExecutionStore : IPurchaseExecutionStore
     public PurchaseExecution? FindOwned(string id, string principal) { lock (_gate) return _items.GetValueOrDefault(id) is { } x && x.PrincipalId == principal ? x : null; }
     public PurchaseExecution? FindByIntent(string intent) { lock (_gate) return _items.Values.FirstOrDefault(x => x.PurchaseIntentId == intent); }
     public IReadOnlyList<PurchaseExecution> FindByPrincipal(string principal) { lock (_gate) return _items.Values.Where(x => x.PrincipalId == principal).ToList(); }
+}
+public sealed class InMemoryConsumerPlanningStore:IConsumerPlanningStore
+{
+    private readonly object _gate=new();private readonly Dictionary<string,ConsumerPlanningConversation> _conversations=new();private readonly List<ConsumerPlanningTurn> _turns=[];private readonly List<ConsumerProductReservation> _reservations=[];
+    public ConsumerPlanningConversation Create(string principal,string objective,string state,DateTimeOffset now){lock(_gate){var item=new ConsumerPlanningConversation($"conversation_{Guid.NewGuid():N}",principal,objective,"INVESTIGATING",state,now,now);_conversations[item.ConversationId]=item;return item;}}
+    public ConsumerPlanningConversation? FindOwned(string id,string principal){lock(_gate)return _conversations.GetValueOrDefault(id)is{} x&&x.PrincipalId==principal?x:null;}
+    public void Save(ConsumerPlanningConversation item){lock(_gate)_conversations[item.ConversationId]=item;}
+    public void Append(ConsumerPlanningTurn turn){lock(_gate){if(_turns.All(x=>x.TurnId!=turn.TurnId))_turns.Add(turn);}}
+    public IReadOnlyList<ConsumerPlanningTurn> Turns(string id){lock(_gate)return _turns.Where(x=>x.ConversationId==id).OrderBy(x=>x.Sequence).ToList();}
+    public void ReplaceReservations(string id,IReadOnlyList<ConsumerProductReservation> rows){lock(_gate){_reservations.RemoveAll(x=>x.ConversationId==id);_reservations.AddRange(rows);}}
+    public IReadOnlyList<ConsumerProductReservation> Reservations(string id){lock(_gate)return _reservations.Where(x=>x.ConversationId==id).ToList();}
+    private readonly Dictionary<(string Principal,string Key),string> _preferences=new();private readonly Dictionary<string,ConversationPolicy> _policies=new();
+    public IReadOnlyDictionary<string,string> Preferences(string principal){lock(_gate)return _preferences.Where(x=>x.Key.Principal==principal).ToDictionary(x=>x.Key.Key,x=>x.Value);}
+    public void Remember(string principal,string key,string value,string source,DateTimeOffset now){lock(_gate)_preferences[(principal,key)]=value;}
+    public ConversationPolicy GetPolicy(string principal){lock(_gate)return _policies.GetValueOrDefault(principal)??new(principal,"AUTO_WHEN_SAFE",false,false,DateTimeOffset.UtcNow);}
+    public void SavePolicy(ConversationPolicy policy){lock(_gate)_policies[policy.PrincipalId]=policy;}
 }

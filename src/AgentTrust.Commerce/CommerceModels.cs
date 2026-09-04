@@ -9,7 +9,9 @@ using System.Text.Json;
 namespace AgentTrust.Commerce;
 
 public sealed record Product(string ProductId, string Description, decimal UnitPrice, string Currency,
-    int AvailableQuantity, IReadOnlySet<string> Tags);
+    int AvailableQuantity, IReadOnlySet<string> Tags, decimal? CaloriesPerUnit = null,
+    decimal? ProteinGramsPerUnit = null, IReadOnlySet<string>? Allergens = null,
+    IReadOnlySet<string>? DietaryTags = null);
 public sealed record BasketItem(string ProductId, string Description, int Quantity, decimal UnitPrice,
     decimal TotalPrice, bool SubstitutionAllowed, string? SubstituteForProductId = null);
 public sealed record Basket(string BasketId, string MerchantId, IReadOnlyList<BasketItem> Items);

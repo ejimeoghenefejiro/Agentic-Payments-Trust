@@ -172,6 +172,25 @@ public sealed class EfPaymentMethodStore : IPaymentMethodStore
     private static PaymentMethod? Map(ConsumerPaymentMethodEntity? x)=>x is null?null:new(x.PaymentMethodId,x.PrincipalId,x.Provider,x.ProviderToken,x.CardBrand,x.Last4,x.ExpiryMonth,x.ExpiryYear,Enum.Parse<PaymentMethodStatus>(x.Status));
 }
 
+public sealed class EfConsumerPlanningStore:IConsumerPlanningStore
+{
+    private readonly AgentTrustDbContext _db;public EfConsumerPlanningStore(AgentTrustDbContext db)=>_db=db;
+    public ConsumerPlanningConversation Create(string principal,string objective,string state,DateTimeOffset now){var x=new ConsumerPlanningConversationEntity{ConversationId=$"conversation_{Guid.NewGuid():N}",PrincipalId=principal,Objective=objective,Status="INVESTIGATING",StateJson=state,CreatedAt=now,UpdatedAt=now,Version=1};_db.Add(x);_db.SaveChanges();return Map(x);}
+    public ConsumerPlanningConversation? FindOwned(string id,string principal)=>_db.ConsumerPlanningConversations.AsNoTracking().SingleOrDefault(x=>x.ConversationId==id&&x.PrincipalId==principal)is{} x?Map(x):null;
+    public void Save(ConsumerPlanningConversation item){var x=_db.ConsumerPlanningConversations.Single(v=>v.ConversationId==item.ConversationId);x.Status=item.Status;x.StateJson=item.StateJson;x.UpdatedAt=item.UpdatedAt;x.Version++;_db.SaveChanges();}
+    public void Append(ConsumerPlanningTurn item){if(_db.ConsumerPlanningTurns.Any(x=>x.TurnId==item.TurnId))return;_db.Add(new ConsumerPlanningTurnEntity{TurnId=item.TurnId,ConversationId=item.ConversationId,Sequence=item.Sequence,Role=item.Role,Kind=item.Kind,Content=item.Content,ToolName=item.ToolName,ToolInputJson=item.ToolInputJson,ToolOutputJson=item.ToolOutputJson,CreatedAt=item.CreatedAt});_db.SaveChanges();}
+    public IReadOnlyList<ConsumerPlanningTurn> Turns(string id)=>_db.ConsumerPlanningTurns.AsNoTracking().Where(x=>x.ConversationId==id).OrderBy(x=>x.Sequence).Select(x=>new ConsumerPlanningTurn(x.TurnId,x.ConversationId,x.Sequence,x.Role,x.Kind,x.Content,x.ToolName,x.ToolInputJson,x.ToolOutputJson,x.CreatedAt)).ToList();
+    public void ReplaceReservations(string id,IReadOnlyList<ConsumerProductReservation> rows){var old=_db.ConsumerProductReservations.Where(x=>x.ConversationId==id);_db.RemoveRange(old);_db.AddRange(rows.Select(x=>new ConsumerProductReservationEntity{ReservationId=x.ReservationId,ConversationId=x.ConversationId,ProductId=x.ProductId,Quantity=x.Quantity,UnitPrice=x.UnitPrice,Currency=x.Currency,Status=x.Status,ReservedAt=x.ReservedAt,ExpiresAt=x.ExpiresAt,Version=x.Version}));_db.SaveChanges();}
+    public IReadOnlyList<ConsumerProductReservation> Reservations(string id)=>_db.ConsumerProductReservations.AsNoTracking().Where(x=>x.ConversationId==id).Select(x=>new ConsumerProductReservation(x.ReservationId,x.ConversationId,x.ProductId,x.Quantity,x.UnitPrice,x.Currency,x.Status,x.ReservedAt,x.ExpiresAt,x.Version)).ToList();
+    public IReadOnlyDictionary<string,string> Preferences(string principal)=>_db.ConsumerPreferenceMemories.AsNoTracking().Where(x=>x.PrincipalId==principal).ToDictionary(x=>x.Key,x=>x.Value);
+    public void Remember(string principal,string key,string value,string source,DateTimeOffset now){var x=_db.ConsumerPreferenceMemories.SingleOrDefault(v=>v.PrincipalId==principal&&v.Key==key);if(x is null){x=new(){MemoryId=$"preference_{Guid.NewGuid():N}",PrincipalId=principal,Key=key,CreatedAt=now,Version=1};_db.Add(x);}else x.Version++;x.Value=value;x.SourceConversationId=source;x.UpdatedAt=now;_db.SaveChanges();}
+    public ConversationPolicy GetPolicy(string principal)=>_db.ConsumerConversationPolicies.AsNoTracking().SingleOrDefault(x=>x.PrincipalId==principal)is{} x
+        ?new(x.PrincipalId,x.InteractionMode,x.AskBeforeSubstitutions,x.ShowBasketBeforePayment,x.UpdatedAt,x.Version)
+        :new(principal,"AUTO_WHEN_SAFE",false,false,DateTimeOffset.UtcNow);
+    public void SavePolicy(ConversationPolicy policy){var x=_db.ConsumerConversationPolicies.SingleOrDefault(v=>v.PrincipalId==policy.PrincipalId);if(x is null){x=new(){PrincipalId=policy.PrincipalId};_db.Add(x);}x.InteractionMode=policy.InteractionMode;x.AskBeforeSubstitutions=policy.AskBeforeSubstitutions;x.ShowBasketBeforePayment=policy.ShowBasketBeforePayment;x.UpdatedAt=policy.UpdatedAt;x.Version=policy.Version;_db.SaveChanges();}
+    private static ConsumerPlanningConversation Map(ConsumerPlanningConversationEntity x)=>new(x.ConversationId,x.PrincipalId,x.Objective,x.Status,x.StateJson,x.CreatedAt,x.UpdatedAt,x.Version);
+}
+
 public sealed class EfMandateUsageTracker : IMandateUsageTracker
 {
     private readonly AgentTrustDbContext _db; public EfMandateUsageTracker(AgentTrustDbContext db)=>_db=db;

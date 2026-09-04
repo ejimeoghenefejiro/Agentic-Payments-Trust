@@ -191,6 +191,7 @@ if (connectionString is not null)
     builder.Services.AddScoped<IPaymentMethodStore, EfPaymentMethodStore>();
     builder.Services.AddScoped<IPurchaseAuditSink, EfPurchaseAuditSink>();
     builder.Services.AddScoped<ICommerceDurability, EfCommerceDurability>();
+    builder.Services.AddScoped<IConsumerPlanningStore,EfConsumerPlanningStore>();
     builder.Services.AddHostedService<ConsumerPilotWorker>();
 }
 else
@@ -206,6 +207,7 @@ else
     builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
     builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
     builder.Services.AddSingleton<ICommerceDurability, InMemoryCommerceDurability>();
+    builder.Services.AddSingleton<IConsumerPlanningStore,InMemoryConsumerPlanningStore>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),

@@ -28,11 +28,12 @@ public sealed class ConsumerController : ControllerBase
     private readonly IScheduledOccurrenceStore _occurrences;
     private readonly IAgentRegistry _agents;private readonly IPrincipalBindingStore _bindings;private readonly IPrincipalStore _principals;
     private readonly IConsumerPurchaseRequestAgent _requestAgent;private readonly IConfiguration _configuration;
+    private readonly IConsumerPlanningStore _planning;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, DemoGroceryConnector connector,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connector; _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration; }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration,IConsumerPlanningStore planning)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connector; _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration;_planning=planning; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -90,11 +91,13 @@ public sealed class ConsumerController : ControllerBase
     [HttpGet("purchases")] public ActionResult<IReadOnlyList<PurchaseExecution>> Purchases() => Ok(_purchases.FindByPrincipal(PrincipalId()));
     /// <summary>Submit one plain-language shopping request. The agent plans the basket; only the deterministic trust layer can authorise payment.</summary>
     [HttpPost("purchases/request"),Authorize(Policy="StepUp"),Consumes("text/plain")]
-    public async Task<ActionResult<object>> RequestPurchase([FromBody]string instruction,CancellationToken token)
+    public async Task<ActionResult<object>> RequestPurchase([FromBody]string instruction,[FromQuery]string? conversationId,CancellationToken token)
     {
         var principal=PrincipalId();var now=DateTimeOffset.UtcNow;var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
-        var catalogue=await _connector.SearchProductsAsync("",token);var plan=await _requestAgent.PlanAsync(instruction,catalogue,token);
-        if(plan.Status!=PurchasePlanningStatus.Ready)return Ok(new{instruction,planning=plan,paymentAttempted=false,trustBoundaryInvoked=false});
+        var catalogue=await _connector.SearchProductsAsync("",token);ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(principal,conversationId,instruction,catalogue,token);}catch(UnauthorizedAccessException){return NotFound();}
+        if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
+        var holds=_planning.Reservations(plan.ConversationId!);if(holds.Count!=plan.Items.Count)return Conflict(new{code="PRODUCT_RESERVATION_INCOMPLETE",conversationId=plan.ConversationId});
+        foreach(var hold in holds){var current=await _connector.GetProductAsync(hold.ProductId,token);if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)return Conflict(new{code="PRODUCT_REVALIDATION_REQUIRED",conversationId=plan.ConversationId,productId=hold.ProductId});}
         var mandate=_mandates.FindByPrincipal(principal).Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase)&&string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase)&&x.PerTransactionLimit>=plan.MaximumAmount)
             .OrderBy(x=>x.PerTransactionLimit).FirstOrDefault();
         if(mandate is null)return UnprocessableEntity(new{code="NO_SUITABLE_ACTIVE_MANDATE",message="Create an active grocery mandate whose per-transaction limit covers the requested budget."});

@@ -291,3 +291,24 @@ public sealed class ConsumerPaymentMethodEntity
     public string Status { get; set; } = "Active";
     public long Version { get; set; } = 1;
 }
+
+public sealed class ConsumerPlanningConversationEntity
+{
+    public string ConversationId{get;set;}="";public string PrincipalId{get;set;}="";public string Objective{get;set;}="";public string Status{get;set;}="INVESTIGATING";public string StateJson{get;set;}="{}";public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerPlanningTurnEntity
+{
+    public string TurnId{get;set;}="";public string ConversationId{get;set;}="";public int Sequence{get;set;}public string Role{get;set;}="";public string Kind{get;set;}="";public string Content{get;set;}="";public string? ToolName{get;set;}public string? ToolInputJson{get;set;}public string? ToolOutputJson{get;set;}public DateTimeOffset CreatedAt{get;set;}
+}
+public sealed class ConsumerProductReservationEntity
+{
+    public string ReservationId{get;set;}="";public string ConversationId{get;set;}="";public string ProductId{get;set;}="";public int Quantity{get;set;}public decimal UnitPrice{get;set;}public string Currency{get;set;}="";public string Status{get;set;}="Reserved";public DateTimeOffset ReservedAt{get;set;}public DateTimeOffset ExpiresAt{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerPreferenceMemoryEntity
+{
+    public string MemoryId{get;set;}="";public string PrincipalId{get;set;}="";public string Key{get;set;}="";public string Value{get;set;}="";public string SourceConversationId{get;set;}="";public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerConversationPolicyEntity
+{
+    public string PrincipalId{get;set;}="";public string InteractionMode{get;set;}="AUTO_WHEN_SAFE";public bool AskBeforeSubstitutions{get;set;}public bool ShowBasketBeforePayment{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
+}

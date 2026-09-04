@@ -45,6 +45,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 ["ConnectionStrings:SqlServer"] = null,
                 ["ConnectionStrings:Postgres"] = null
+                ,["ConsumerPilot:Planning:AllowDeterministicFallback"] = "true"
             }));
             builder.ConfigureServices(services => services.AddAuthentication("IntegrationTest")
                 .AddScheme<AuthenticationSchemeOptions, IntegrationTestAuthHandler>("IntegrationTest", _ => { }));
@@ -89,7 +90,21 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         {
             var lowBudgetResponse=await _client.PostAsync("/api/consumer/purchases/request",lowBudgetRequest);Assert.Equal(HttpStatusCode.OK,lowBudgetResponse.StatusCode);
             var lowBudget=await lowBudgetResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("NEEDS_INPUT",lowBudget.GetProperty("planning").GetProperty("status").GetString());
+            Assert.Equal(12.75m,lowBudget.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(lowBudget.GetProperty("planning").GetProperty("questions").GetArrayLength()>0);
+            var lowTools=lowBudget.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()).ToArray();Assert.Contains("search_catalogue",lowTools);Assert.Contains("price_basket",lowTools);
             Assert.False(lowBudget.GetProperty("paymentAttempted").GetBoolean());Assert.False(lowBudget.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(lowBudget.TryGetProperty("taskId",out _));
+            var conversationId=lowBudget.GetProperty("planning").GetProperty("conversationId").GetString();Assert.False(string.IsNullOrWhiteSpace(conversationId));
+            using var answer=new StringContent("I already have chicken, sauce, lettuce and tomatoes.",System.Text.Encoding.UTF8,"text/plain");var resumed=await _client.PostAsync($"/api/consumer/purchases/request?conversationId={Uri.EscapeDataString(conversationId!)}",answer);
+            Assert.Equal(HttpStatusCode.OK,resumed.StatusCode);var resumedBody=await resumed.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("READY",resumedBody.GetProperty("planning").GetProperty("status").GetString());Assert.Equal(4.30m,resumedBody.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(resumedBody.GetProperty("trustBoundaryInvoked").GetBoolean());
+        }
+        using(var reviewRequest=new StringContent("Show me the basket before paying. I want to make chicken wraps within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var proposedResponse=await _client.PostAsync("/api/consumer/purchases/request",reviewRequest);Assert.Equal(HttpStatusCode.OK,proposedResponse.StatusCode);
+            var proposed=await proposedResponse.Content.ReadFromJsonAsync<JsonElement>();var planning=proposed.GetProperty("planning");
+            Assert.Equal("PROPOSE",planning.GetProperty("interactionDecision").GetString());Assert.False(proposed.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(proposed.GetProperty("paymentAttempted").GetBoolean());
+            var reviewConversation=planning.GetProperty("conversationId").GetString()!;
+            using var proceed=new StringContent("Use your best judgement and proceed.",System.Text.Encoding.UTF8,"text/plain");var executedResponse=await _client.PostAsync($"/api/consumer/purchases/request?conversationId={Uri.EscapeDataString(reviewConversation)}",proceed);
+            Assert.Equal(HttpStatusCode.OK,executedResponse.StatusCode);var executed=await executedResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("EXECUTE",executed.GetProperty("planning").GetProperty("interactionDecision").GetString());Assert.True(executed.GetProperty("trustBoundaryInvoked").GetBoolean());
         }
         using(var naturalRequest=new StringContent("I want to make chicken wraps. Get all required ingredients within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))
         {
