@@ -22,6 +22,7 @@ public sealed class EfAgentRegistry : IAgentRegistry
         var e = _db.Agents.AsNoTracking().FirstOrDefault(a => a.AgentId == agentId);
         return e is null ? null : ToDomain(e);
     }
+    public IReadOnlyList<AgentIdentity> FindByPrincipal(string principalId)=>_db.Agents.AsNoTracking().Where(x=>x.PrincipalId==principalId).AsEnumerable().Select(ToDomain).ToList();
 
     public void Register(AgentIdentity identity)
     {

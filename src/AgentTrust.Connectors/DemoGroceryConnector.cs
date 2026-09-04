@@ -84,7 +84,12 @@ public sealed class DemoGroceryConnector : ICommerceConnector
         new("bread-wholemeal", "Wholemeal bread", 1.40m, "GBP", 100, new HashSet<string>{"bread","bakery"}),
         new("eggs-12", "Free range eggs 12 pack", 3.20m, "GBP", 100, new HashSet<string>{"eggs"}),
         new("bananas-1kg", "Bananas 1kg", 1.15m, "GBP", 100, new HashSet<string>{"banana","fruit"}),
-        new("rice-5kg", "Basmati rice 5kg", 8.50m, "GBP", 100, new HashSet<string>{"rice","grocery"})];
+        new("rice-5kg", "Basmati rice 5kg", 8.50m, "GBP", 100, new HashSet<string>{"rice","grocery"}),
+        new("chicken-breast-500g","Chicken breast 500g",4.75m,"GBP",100,new HashSet<string>{"chicken","meat"}),
+        new("tortilla-wraps-8","Soft tortilla wraps 8 pack",1.80m,"GBP",100,new HashSet<string>{"wrap","wraps","tortilla"}),
+        new("lettuce-iceberg","Iceberg lettuce",0.95m,"GBP",100,new HashSet<string>{"lettuce","salad"}),
+        new("tomatoes-6","Salad tomatoes 6 pack",1.25m,"GBP",100,new HashSet<string>{"tomato","tomatoes","salad"}),
+        new("garlic-sauce","Garlic mayonnaise sauce",1.50m,"GBP",100,new HashSet<string>{"sauce","mayonnaise"})];
 }
 
 public sealed class MockPlatformPaymentProcessor : IPlatformPaymentProcessor

@@ -61,16 +61,45 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task NewConsumerReceivesOrderedSetupRequirementsBeforeAgentPlanning()
+    {
+        _client.DefaultRequestHeaders.Add("X-Test-Principal",$"new_consumer_{Guid.NewGuid():N}");_client.DefaultRequestHeaders.Add("X-Test-Mfa","true");
+        var status=await _client.GetFromJsonAsync<JsonElement>("/api/consumer/setup/status");
+        Assert.False(status.GetProperty("isReady").GetBoolean());var steps=status.GetProperty("requiredSetupSteps");Assert.Equal(3,steps.GetArrayLength());
+        Assert.Equal("AGENT",steps[0].GetProperty("resource").GetString());Assert.Equal("PAYMENT_METHOD",steps[1].GetProperty("resource").GetString());Assert.Equal("MANDATE",steps[2].GetProperty("resource").GetString());
+        using var body=new StringContent("I want to make chicken wraps. Get all required ingredients within a £20 budget.",System.Text.Encoding.UTF8,"text/plain");
+        var response=await _client.PostAsync("/api/consumer/purchases/request",body);Assert.Equal(HttpStatusCode.Conflict,response.StatusCode);
+    }
+
+    [Fact]
     public async Task ConsumerSwaggerPath_CreatesOwnedMandateTaskPurchaseReceiptAndAudit_Idempotently()
     {
         var suffix=Guid.NewGuid().ToString("N")[..8];var principal=$"consumer_{suffix}";var agent=$"consumer_agent_{suffix}";
         _client.DefaultRequestHeaders.Add("X-Test-Principal",principal);_client.DefaultRequestHeaders.Add("X-Test-Mfa","true");
         Assert.Equal(HttpStatusCode.Created,(await _client.PostAsJsonAsync("/api/consumer/agents",new{agentId=agent,displayName="Test consumer"})).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,(await _client.PostAsJsonAsync("/api/consumer/agents",new{agentId=agent,displayName="Test consumer"})).StatusCode);
         var methodResponse=await _client.PostAsJsonAsync("/api/consumer/payment-methods/setup",new{provider="Stripe",providerToken=$"pm_test_{suffix}",cardBrand="visa",last4="4242",expiryMonth=12,expiryYear=2035});
         Assert.Equal(HttpStatusCode.OK,methodResponse.StatusCode);var method=await methodResponse.Content.ReadFromJsonAsync<JsonElement>();var methodId=method.GetProperty("paymentMethodId").GetString()!;
+        var repeatedMethod=await _client.PostAsJsonAsync("/api/consumer/payment-methods/setup",new{provider="Stripe",providerToken=$"pm_test_{suffix}",cardBrand="visa",last4="4242",expiryMonth=12,expiryYear=2035});
+        Assert.Equal(HttpStatusCode.OK,repeatedMethod.StatusCode);Assert.Equal(methodId,(await repeatedMethod.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("paymentMethodId").GetString());
         var now=DateTimeOffset.UtcNow;
         var mandateResponse=await _client.PostAsJsonAsync("/api/consumer/mandates",new{agentId=agent,merchantIds=new[]{"demo-grocery"},paymentMethodId=methodId,currency="GBP",perTransactionLimit=70m,weeklyLimit=70m,humanApprovalThreshold=70m,validFrom=now.AddMinutes(-1),validUntil=now.AddMonths(1)});
         Assert.Equal(HttpStatusCode.Created,mandateResponse.StatusCode);var mandate=await mandateResponse.Content.ReadFromJsonAsync<JsonElement>();var mandateId=mandate.GetProperty("mandateId").GetString()!;
+        using(var lowBudgetRequest=new StringContent("I want to make chicken wraps. Get all required ingredients within a £4.99 budget.",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var lowBudgetResponse=await _client.PostAsync("/api/consumer/purchases/request",lowBudgetRequest);Assert.Equal(HttpStatusCode.OK,lowBudgetResponse.StatusCode);
+            var lowBudget=await lowBudgetResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("NEEDS_INPUT",lowBudget.GetProperty("planning").GetProperty("status").GetString());
+            Assert.False(lowBudget.GetProperty("paymentAttempted").GetBoolean());Assert.False(lowBudget.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(lowBudget.TryGetProperty("taskId",out _));
+        }
+        using(var naturalRequest=new StringContent("I want to make chicken wraps. Get all required ingredients within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var naturalResponse=await _client.PostAsync("/api/consumer/purchases/request",naturalRequest);
+            Assert.Equal(HttpStatusCode.OK,naturalResponse.StatusCode);var natural=await naturalResponse.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("Chicken wraps",natural.GetProperty("planning").GetProperty("summary").GetString());
+            Assert.Contains("price_basket",natural.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()));
+            Assert.Equal((int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,natural.GetProperty("execution").GetProperty("state").GetInt32());
+            Assert.Equal(5,natural.GetProperty("intent").GetProperty("basketItems").GetArrayLength());
+        }
         var taskResponse=await _client.PostAsJsonAsync("/api/consumer/tasks",new{instruction="Buy weekly groceries",merchantId="demo-grocery",mandateId,paymentMethodId=methodId,currency="GBP",maximumAmount=70m,timezone="Europe/London",schedule=new{frequency="Weekly",dayOfWeek="Sunday",localTime="10:00"},shoppingList=new[]{new{query="milk",quantity=2},new{query="bread",quantity=1},new{query="eggs",quantity=1},new{query="bananas",quantity=1}},substitutionPolicy=new{allowed=true,maximumAdditionalAmount=5m},deliveryAddressReference="test-address"});
         Assert.Equal(HttpStatusCode.Created,taskResponse.StatusCode);var task=await taskResponse.Content.ReadFromJsonAsync<JsonElement>();var taskId=task.GetProperty("taskId").GetString()!;
         var scheduled=DateTimeOffset.Parse("2030-01-06T10:00:00Z");

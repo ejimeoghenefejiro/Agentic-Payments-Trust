@@ -5,6 +5,7 @@ namespace AgentTrust.Core;
 public interface IAgentRegistry
 {
     AgentIdentity? Find(string agentId);
+    IReadOnlyList<AgentIdentity> FindByPrincipal(string principalId);
     void Register(AgentIdentity identity);
 }
 
@@ -78,6 +79,7 @@ public sealed class InMemoryAgentRegistry : IAgentRegistry
 {
     private readonly Dictionary<string, AgentIdentity> _agents = new();
     public AgentIdentity? Find(string agentId) => _agents.GetValueOrDefault(agentId);
+    public IReadOnlyList<AgentIdentity> FindByPrincipal(string principalId)=>_agents.Values.Where(x=>x.PrincipalId==principalId).ToList();
     public void Register(AgentIdentity identity) => _agents[identity.AgentId] = identity;
 }
 

@@ -167,6 +167,7 @@ public sealed class EfPaymentMethodStore : IPaymentMethodStore
     public void Save(PaymentMethod item){var x=_db.ConsumerPaymentMethods.SingleOrDefault(v=>v.PaymentMethodId==item.PaymentMethodId);if(x is null){x=new(){PaymentMethodId=item.PaymentMethodId,Version=1};_db.Add(x);}else x.Version++;
         x.PrincipalId=item.PrincipalId;x.Provider=item.Provider;x.ProviderToken=item.Token;x.CardBrand=item.CardBrand;x.Last4=item.Last4;x.ExpiryMonth=item.ExpiryMonth;x.ExpiryYear=item.ExpiryYear;x.Status=item.Status.ToString();_db.SaveChanges();}
     public PaymentMethod? Find(string id)=>Map(_db.ConsumerPaymentMethods.AsNoTracking().SingleOrDefault(x=>x.PaymentMethodId==id));
+    public PaymentMethod? FindByProviderToken(string provider,string token)=>Map(_db.ConsumerPaymentMethods.AsNoTracking().SingleOrDefault(x=>x.Provider==provider&&x.ProviderToken==token));
     public IReadOnlyList<PaymentMethod> FindByPrincipal(string id)=>_db.ConsumerPaymentMethods.AsNoTracking().Where(x=>x.PrincipalId==id).AsEnumerable().Select(Map).OfType<PaymentMethod>().ToList();
     private static PaymentMethod? Map(ConsumerPaymentMethodEntity? x)=>x is null?null:new(x.PaymentMethodId,x.PrincipalId,x.Provider,x.ProviderToken,x.CardBrand,x.Last4,x.ExpiryMonth,x.ExpiryYear,Enum.Parse<PaymentMethodStatus>(x.Status));
 }

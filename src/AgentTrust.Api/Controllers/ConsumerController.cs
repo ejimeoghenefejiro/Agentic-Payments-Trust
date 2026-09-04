@@ -27,16 +27,17 @@ public sealed class ConsumerController : ControllerBase
     private readonly IMandateStore _mandates; private readonly ICommerceDurability _durability; private readonly IPurchaseAuditSink _audit;
     private readonly IScheduledOccurrenceStore _occurrences;
     private readonly IAgentRegistry _agents;private readonly IPrincipalBindingStore _bindings;private readonly IPrincipalStore _principals;
+    private readonly IConsumerPurchaseRequestAgent _requestAgent;private readonly IConfiguration _configuration;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, DemoGroceryConnector connector,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connector; _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals; }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connector; _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
     {
-        var principal=PrincipalId();if(_agents.Find(request.AgentId)is not null)return Conflict("Agent already exists.");
+        var principal=PrincipalId();if(_agents.Find(request.AgentId)is{} existing)return existing.PrincipalId==principal?Ok(existing):Conflict("Agent already exists.");
         if(_principals.Find(principal)is null)_principals.Register(new Principal(principal,request.DisplayName??principal,DateTimeOffset.UtcNow));
         var now=DateTimeOffset.UtcNow;var agent=new AgentIdentity(request.AgentId,principal,"consumer-purchase","Development",CredentialStatus.Active,now,now.AddYears(1),"authenticated-consumer");
         _agents.Register(agent);_bindings.Bind(new PrincipalBinding(request.AgentId,principal,now,true,"authenticated-api"));return CreatedAtAction(nameof(GetAgent),new{id=agent.AgentId},agent);
@@ -76,14 +77,35 @@ public sealed class ConsumerController : ControllerBase
     [HttpPost("tasks/{id}/cancel"),Authorize(Policy="StepUp")]
     public ActionResult<ConsumerPurchaseTask> CancelTask(string id){var task=_tasks.FindOwned(id,PrincipalId());if(task is null)return NotFound();task=task with{Status=ConsumerTaskStatus.Cancelled};_tasks.Save(task);return Ok(task);}
     [HttpGet("payment-methods")] public ActionResult<IReadOnlyList<PaymentMethod>> PaymentMethods() => Ok(_paymentMethods.FindByPrincipal(PrincipalId()));
+    [HttpGet("setup/status")]
+    public ActionResult<ConsumerSetupStatus> SetupStatus()=>Ok(BuildSetupStatus(PrincipalId(),DateTimeOffset.UtcNow));
     [HttpPost("payment-methods/setup"), Authorize(Policy = "StepUp")]
     public ActionResult<PaymentMethod> SetupPaymentMethod(ProviderPaymentMethodRequest request)
     {
         var service = new PaymentMethodService(new RejectRawCardTokenizationProvider(), _paymentMethods);
-        return Ok(service.ConnectProviderToken(PrincipalId(), request.Provider, request.ProviderToken,
-            request.CardBrand, request.Last4, request.ExpiryMonth, request.ExpiryYear));
+        try{return Ok(service.ConnectProviderToken(PrincipalId(), request.Provider, request.ProviderToken,
+            request.CardBrand, request.Last4, request.ExpiryMonth, request.ExpiryYear));}
+        catch(InvalidOperationException){return Conflict("The provider payment method is already registered.");}
     }
     [HttpGet("purchases")] public ActionResult<IReadOnlyList<PurchaseExecution>> Purchases() => Ok(_purchases.FindByPrincipal(PrincipalId()));
+    /// <summary>Submit one plain-language shopping request. The agent plans the basket; only the deterministic trust layer can authorise payment.</summary>
+    [HttpPost("purchases/request"),Authorize(Policy="StepUp"),Consumes("text/plain")]
+    public async Task<ActionResult<object>> RequestPurchase([FromBody]string instruction,CancellationToken token)
+    {
+        var principal=PrincipalId();var now=DateTimeOffset.UtcNow;var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
+        var catalogue=await _connector.SearchProductsAsync("",token);var plan=await _requestAgent.PlanAsync(instruction,catalogue,token);
+        if(plan.Status!=PurchasePlanningStatus.Ready)return Ok(new{instruction,planning=plan,paymentAttempted=false,trustBoundaryInvoked=false});
+        var mandate=_mandates.FindByPrincipal(principal).Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase)&&string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase)&&x.PerTransactionLimit>=plan.MaximumAmount)
+            .OrderBy(x=>x.PerTransactionLimit).FirstOrDefault();
+        if(mandate is null)return UnprocessableEntity(new{code="NO_SUITABLE_ACTIVE_MANDATE",message="Create an active grocery mandate whose per-transaction limit covers the requested budget."});
+        var method=_paymentMethods.Find(mandate.PaymentMethodId);if(method is null||method.PrincipalId!=principal||!method.IsUsable(DateOnly.FromDateTime(DateTime.UtcNow)))return UnprocessableEntity(new{code="NO_USABLE_PAYMENT_METHOD"});
+        var task=new ConsumerPurchaseTask($"ctask_{Guid.NewGuid():N}",principal,mandate.AgentId,new HashSet<string>([_connector.MerchantId],StringComparer.OrdinalIgnoreCase),"OneOff","Europe/London",plan.MaximumAmount,plan.Currency,
+            plan.Items.Select(x=>new ShoppingListItem(x.SearchTerm,x.Quantity)).ToList(),new PurchasePreference(mandate.TaskParameters.GetValueOrDefault("deliveryAddressReference")??"default-delivery-address",null,SubstitutionPolicy.SameOrLowerPrice,new Dictionary<string,string>{{"instruction",instruction}}),
+            mandate.MandateId,method.PaymentMethodId,ConsumerTaskStatus.Active,now,now);
+        _tasks.Save(task);var stripe=string.Equals(_configuration["Payments:Provider"],"Stripe",StringComparison.OrdinalIgnoreCase);
+        var result=await _orchestrator.RunAsync(task.TaskId,principal,now,_connector,new(stripe,true),token);
+        return Ok(new{instruction,planning=plan,paymentAttempted=result.Execution.State is PurchaseExecutionState.CheckoutSubmitted or PurchaseExecutionState.Processing or PurchaseExecutionState.Purchased,trustBoundaryInvoked=true,taskId=task.TaskId,result.Execution,result.Intent,result.Receipt});
+    }
     [HttpGet("purchases/{id}")] public ActionResult<PurchaseExecution> Purchase(string id) => _purchases.FindOwned(id, PrincipalId()) is { } item ? Ok(item) : NotFound();
     [HttpGet("purchases/{id}/audit")] public ActionResult<object> PurchaseAudit(string id)
     { var purchase=_purchases.FindOwned(id,PrincipalId());if(purchase is null)return NotFound();var events=_audit.Find(purchase.PurchaseIntentId);var valid=events.Count>0;for(var i=0;i<events.Count;i++){var expectedPrevious=i==0?events[i].PreviousHash:events[i-1].CurrentHash;valid&=events[i].PreviousHash==expectedPrevious&&events[i].CurrentHash==PurchaseAuditHash.Compute(events[i],events[i].PreviousHash);}return Ok(new{isValid=valid,eventCount=events.Count,events}); }
@@ -111,6 +133,15 @@ public sealed class ConsumerController : ControllerBase
     [HttpPost("purchases/{id}/reject")] public async Task<ActionResult<PurchaseOrchestrationResult>> Reject(string id, CancellationToken token){var p=_purchases.FindOwned(id,PrincipalId());if(p is null)return NotFound();return Ok(await _orchestrator.ResolveAsync(p.PurchaseIntentId,PrincipalId(),false,PrincipalId(),token,_connector));}
     [HttpPost("pilot/execute"), Authorize(Policy = "StepUp")] public Task<ActionResult<PurchaseOrchestrationResult>> Pilot(RunPilotRequest request, CancellationToken token) => Run(request.TaskId, new(request.ScheduledFor, true, request.ExplicitLiveConfirmation), token);
     private string PrincipalId() => User.FindFirst(AgentTrustClaimTypes.PrincipalId)?.Value ?? throw new UnauthorizedAccessException("Linked authenticated principal identifier is required.");
+    private ConsumerSetupStatus BuildSetupStatus(string principal,DateTimeOffset now)
+    {
+        var hasAgent=_agents.FindByPrincipal(principal).Any(x=>x.IsValid(now));
+        var usableMethods=_paymentMethods.FindByPrincipal(principal).Where(x=>x.IsUsable(DateOnly.FromDateTime(now.UtcDateTime))).ToList();
+        var hasMethod=usableMethods.Count>0;var methodIds=usableMethods.Select(x=>x.PaymentMethodId).ToHashSet();
+        var hasMandate=_mandates.FindByPrincipal(principal).Any(x=>x.IsActive(now)&&methodIds.Contains(x.PaymentMethodId)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase));
+        var steps=new[]{new ConsumerSetupStep(1,"AGENT",hasAgent,"POST /api/consumer/agents"),new ConsumerSetupStep(2,"PAYMENT_METHOD",hasMethod,"POST /api/consumer/payment-methods/setup"),new ConsumerSetupStep(3,"MANDATE",hasMandate,"POST /api/consumer/mandates")};
+        return new(steps.All(x=>x.Complete),steps.Where(x=>!x.Complete).ToArray(),steps);
+    }
     private static string NormalizeMerchant(string value)=>value.Equals("demo-grocery",StringComparison.OrdinalIgnoreCase)?"GroceryDemo":value;
     private static DateTimeOffset NextOccurrence(TaskScheduleRequest schedule,string timezone,DateTimeOffset now){if(!schedule.Frequency.Equals("Weekly",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Only Weekly is supported.");var zone=TimeZoneInfo.FindSystemTimeZoneById(timezone);var local=TimeZoneInfo.ConvertTime(now,zone);if(!Enum.TryParse<DayOfWeek>(schedule.DayOfWeek,true,out var day)||!TimeOnly.TryParse(schedule.LocalTime,out var time))throw new ArgumentException("Invalid weekly schedule.");var days=((int)day-(int)local.DayOfWeek+7)%7;var candidate=local.Date.AddDays(days).Add(time.ToTimeSpan());if(candidate<=local.DateTime)candidate=candidate.AddDays(7);return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(candidate,DateTimeKind.Unspecified),zone);}
     private sealed class RejectRawCardTokenizationProvider : ICardTokenizationProvider
@@ -128,3 +159,5 @@ public sealed record ProviderPaymentMethodRequest(string Provider, string Provid
 public sealed record CreateMandateRequest(string AgentId,IReadOnlyList<string> MerchantIds,string PaymentMethodId,string Currency,
     decimal PerTransactionLimit,decimal? WeeklyLimit,decimal? HumanApprovalThreshold,DateTimeOffset ValidFrom,DateTimeOffset ValidUntil);
 public sealed record CreateConsumerAgentRequest(string AgentId,string? DisplayName=null);
+public sealed record ConsumerSetupStep(int Order,string Resource,bool Complete,string Endpoint);
+public sealed record ConsumerSetupStatus(bool IsReady,IReadOnlyList<ConsumerSetupStep> RequiredSetupSteps,IReadOnlyList<ConsumerSetupStep> AllSteps);

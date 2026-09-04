@@ -69,6 +69,16 @@ public sealed class CommercePurchaseTests
             result.Execution.PurchaseIntentId, "principal-1", true, "consumer-1"));
     }
 
+    [Fact]
+    public async Task FinalQuoteCannotExceedUserBudgetEvenWhenMandateAllowsIt()
+    {
+        var fixture=Build(70,taskBudget:3);
+        var result=await fixture.Orchestrator.RunAsync("task-1","principal-1",DateTimeOffset.UtcNow,fixture.Connector,new(false,false));
+        Assert.Equal(PurchaseExecutionState.Denied,result.Execution.State);
+        Assert.Contains("USER_BUDGET_EXCEEDED",result.Execution.Reasons);
+        Assert.Equal(0,fixture.Payments.SubmissionCount);
+    }
+
     [Theory]
     [InlineData(MandateStatus.Suspended)]
     [InlineData(MandateStatus.Expired)]
@@ -133,7 +143,7 @@ public sealed class CommercePurchaseTests
     }
 
     private static Fixture Build(decimal maximum, MandateStatus status = MandateStatus.Active,
-        LivePurchaseOptions? live = null)
+        LivePurchaseOptions? live = null,decimal taskBudget=70)
     {
         var now = DateTimeOffset.UtcNow; var agents = new InMemoryAgentRegistry(); var bindings = new InMemoryPrincipalBindingStore();
         var authorities = new InMemoryDelegatedAuthorityStore();
@@ -146,7 +156,7 @@ public sealed class CommercePurchaseTests
             AboveLimitAction.RequireApproval, status, now, status == MandateStatus.Expired ? now.AddDays(-1) : now.AddYears(1)));
         var methods = new InMemoryPaymentMethodStore(); methods.Save(new PaymentMethod("pm-1", "principal-1", "Stripe", "pm_test_token", "Visa", "4242", 12, now.Year + 2, PaymentMethodStatus.Active));
         var tasks = new InMemoryConsumerTaskStore(); tasks.Save(new ConsumerPurchaseTask("task-1", "principal-1", "agent-1",
-            new HashSet<string>{"GroceryDemo"}, "0 10 * * SUN", "Europe/London", maximum, "GBP",
+            new HashSet<string>{"GroceryDemo"}, "0 10 * * SUN", "Europe/London", taskBudget, "GBP",
             [new ShoppingListItem("milk", 1)], new PurchasePreference("address-1", "Sunday 10:00-12:00", SubstitutionPolicy.SameOrLowerPrice, new Dictionary<string,string>()),
             "mandate-1", "pm-1", ConsumerTaskStatus.Active, now, now));
         var executions = new InMemoryPurchaseExecutionStore(); var usage = new InMemoryMandateUsageTracker();

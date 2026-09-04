@@ -4,6 +4,7 @@ public interface IPaymentMethodStore
 {
     void Save(PaymentMethod method);
     PaymentMethod? Find(string paymentMethodId);
+    PaymentMethod? FindByProviderToken(string provider,string providerToken);
     IReadOnlyList<PaymentMethod> FindByPrincipal(string principalId);
 }
 
@@ -14,6 +15,8 @@ public sealed class InMemoryPaymentMethodStore : IPaymentMethodStore
     public void Save(PaymentMethod method) => _methods[method.PaymentMethodId] = method;
 
     public PaymentMethod? Find(string paymentMethodId) => _methods.GetValueOrDefault(paymentMethodId);
+    public PaymentMethod? FindByProviderToken(string provider,string token)=>_methods.Values.FirstOrDefault(x=>
+        string.Equals(x.Provider,provider,StringComparison.OrdinalIgnoreCase)&&x.Token==token);
 
     public IReadOnlyList<PaymentMethod> FindByPrincipal(string principalId) =>
         _methods.Values.Where(m => m.PrincipalId == principalId).ToList();
@@ -53,6 +56,13 @@ public sealed class PaymentMethodService
     {
         if (string.IsNullOrWhiteSpace(providerToken)) throw new ArgumentException("Provider token is required.", nameof(providerToken));
         if (last4.Length != 4 || !last4.All(char.IsDigit)) throw new ArgumentException("Last4 must contain four digits.", nameof(last4));
+        var existing=_store.FindByProviderToken(provider,providerToken);
+        if(existing is not null)
+        {
+            if(existing.PrincipalId!=principalId)throw new InvalidOperationException("The provider payment method is already registered.");
+            if(existing.Status==PaymentMethodStatus.Active)return existing;
+            var reactivated=existing with{Status=PaymentMethodStatus.Active,CardBrand=cardBrand,Last4=last4,ExpiryMonth=expiryMonth,ExpiryYear=expiryYear};_store.Save(reactivated);return reactivated;
+        }
         var method = new PaymentMethod($"pm_{Guid.NewGuid():N}", principalId, provider, providerToken,
             cardBrand, last4, expiryMonth, expiryYear, PaymentMethodStatus.Active);
         _store.Save(method);

@@ -27,7 +27,7 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options=>options.InputFormatters.Insert(0,new TextPlainInputFormatter()));
 builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -230,6 +230,7 @@ builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
         new StripePaymentOptions(mode), sp.GetRequiredService<IPaymentMethodStore>());
 });
 builder.Services.AddScoped<DemoGroceryConnector>();
+builder.Services.AddScoped<IConsumerPurchaseRequestAgent,ConsumerPurchaseRequestAgent>();
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext

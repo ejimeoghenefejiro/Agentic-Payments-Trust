@@ -97,6 +97,7 @@ public sealed class AgentPurchaseOrchestrator
             var delivery = deliveries.OrderBy(x => x.Fee).First();
             await connector.SelectDeliveryOptionAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
             var quote = await connector.GetQuoteAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
+            if(quote.TotalAmount>task.MaximumAmount)return Denied(intentId,task,"USER_BUDGET_EXCEEDED");
             var intent = new PurchaseIntent(intentId, task.PrincipalId, task.AgentId, task.MandateId, task.TaskId,
                 connector.MerchantId, connector.MerchantName, quote.Currency, quote.Items, quote.Subtotal,
                 quote.DeliveryFee, quote.TotalAmount, task.Preferences.DeliveryAddressReference,
