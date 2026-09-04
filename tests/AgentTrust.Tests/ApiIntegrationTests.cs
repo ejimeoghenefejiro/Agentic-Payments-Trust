@@ -33,6 +33,30 @@ namespace AgentTrust.Tests;
 /// </summary>
 public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
+    [Fact]
+    public void PurchasePlanGuard_RejectsMalformedItemsAndOptionalCheeseFailure()
+    {
+        var malformed=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Wraps","Cheese is unavailable",20,"GBP",[new(null!,0)],[],8.75m,[]);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.HasMalformedItems(malformed));
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TreatsOptionalIngredientAsRequired(malformed,"I want chicken wraps within a £20 budget"));
+        Assert.False(AgentTrust.Api.PurchasePlanGuard.TreatsOptionalIngredientAsRequired(malformed,"I want chicken wraps with cheese within a £20 budget"));
+        var omitted=new AgentTrust.Api.ConsumerPurchasePlan(null!,null!,null!,20,null!,null!,null!,null,null!);
+        var normalized=AgentTrust.Api.PurchasePlanGuard.Normalize(omitted);
+        Assert.NotNull(normalized.Items);Assert.NotNull(normalized.Questions);Assert.NotNull(normalized.ToolsUsed);Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,normalized.Status);
+    }
+    [Fact]
+    public void PurchasePlanningPlugin_BatchSearchReturnsPriceOrderedDealsInOneToolCall()
+    {
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("premium-wraps","Premium wraps",2.50m,"GBP",10,new HashSet<string>{"wraps"}),
+            new("value-wraps","Value wraps",1.25m,"GBP",10,new HashSet<string>{"wraps"}),
+            new("chicken","Chicken",4.00m,"GBP",10,new HashSet<string>{"chicken"})
+        ];
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40);var json=plugin.SearchMany("[\"wraps\",\"chicken\"]");using var document=JsonDocument.Parse(json);
+        Assert.Equal("value-wraps",document.RootElement.GetProperty("results").GetProperty("wraps")[0].GetProperty("productId").GetString());
+        Assert.Equal(["search_catalogue_batch"],plugin.ToolsUsed);
+    }
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;
 
@@ -91,7 +115,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             var lowBudgetResponse=await _client.PostAsync("/api/consumer/purchases/request",lowBudgetRequest);Assert.Equal(HttpStatusCode.OK,lowBudgetResponse.StatusCode);
             var lowBudget=await lowBudgetResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("NEEDS_INPUT",lowBudget.GetProperty("planning").GetProperty("status").GetString());
             Assert.Equal(12.75m,lowBudget.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(lowBudget.GetProperty("planning").GetProperty("questions").GetArrayLength()>0);
-            var lowTools=lowBudget.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()).ToArray();Assert.Contains("search_catalogue",lowTools);Assert.Contains("price_basket",lowTools);
+            var lowTools=lowBudget.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()).ToArray();Assert.Contains("search_catalogue_batch",lowTools);Assert.Contains("price_basket",lowTools);
             Assert.False(lowBudget.GetProperty("paymentAttempted").GetBoolean());Assert.False(lowBudget.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(lowBudget.TryGetProperty("taskId",out _));
             var conversationId=lowBudget.GetProperty("planning").GetProperty("conversationId").GetString();Assert.False(string.IsNullOrWhiteSpace(conversationId));
             using var answer=new StringContent("I already have chicken, sauce, lettuce and tomatoes.",System.Text.Encoding.UTF8,"text/plain");var resumed=await _client.PostAsync($"/api/consumer/purchases/request?conversationId={Uri.EscapeDataString(conversationId!)}",answer);

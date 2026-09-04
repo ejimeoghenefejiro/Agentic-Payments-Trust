@@ -19,6 +19,17 @@ namespace AgentTrust.Tests;
 public sealed class CommercePurchaseTests
 {
     [Fact]
+    public async Task ConnectorResolvesDescriptionTagAndInternalIdToTheSameProduct()
+    {
+        var fixture=Build(maximum:70);
+        var byName=await fixture.Connector.SearchProductsAsync("Chicken breast 500g");
+        var byTag=await fixture.Connector.SearchProductsAsync("chicken");
+        var byId=await fixture.Connector.SearchProductsAsync("chicken-breast-500g");
+        Assert.Equal("chicken-breast-500g",Assert.Single(byName).ProductId);
+        Assert.Equal("chicken-breast-500g",Assert.Single(byTag).ProductId);
+        Assert.Equal("chicken-breast-500g",Assert.Single(byId).ProductId);
+    }
+    [Fact]
     public async Task UnderLimitPurchaseTraversesTrustAndCompletesOnce()
     {
         var fixture = Build(maximum: 70);

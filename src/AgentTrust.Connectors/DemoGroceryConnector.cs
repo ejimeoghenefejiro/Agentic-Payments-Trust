@@ -26,7 +26,8 @@ public sealed class DemoGroceryConnector : ICommerceConnector
         _catalogue = (catalogue is not null && catalogue.Any() ? catalogue : DefaultCatalogue()).ToDictionary(x => x.ProductId, StringComparer.OrdinalIgnoreCase);
     }
     public Task<IReadOnlyList<Product>> SearchProductsAsync(string query, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<Product>>(_catalogue.Values.Where(p => p.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
+        Task.FromResult<IReadOnlyList<Product>>(_catalogue.Values.Where(p => p.ProductId.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || p.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
             || p.Tags.Any(t => t.Contains(query, StringComparison.OrdinalIgnoreCase))).ToList());
     public Task<Product?> GetProductAsync(string id, CancellationToken cancellationToken = default) => Task.FromResult(_catalogue.GetValueOrDefault(id));
     public Task<Basket> CreateBasketAsync(string principal, CancellationToken cancellationToken = default)
