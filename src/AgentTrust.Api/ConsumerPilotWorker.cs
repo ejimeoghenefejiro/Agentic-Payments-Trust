@@ -34,7 +34,7 @@ public sealed class ConsumerPilotWorker(IServiceScopeFactory scopes, IConfigurat
         var tasks = services.GetRequiredService<IConsumerTaskStore>();
         var occurrences = services.GetRequiredService<IScheduledOccurrenceStore>();
         var orchestrator = services.GetRequiredService<AgentPurchaseOrchestrator>();
-        var connector = services.GetRequiredService<DemoGroceryConnector>();
+        var connector = services.GetRequiredService<MerchantConnectorRegistry>().All.Single();
         foreach (var task in tasks.FindDue(now))
         {
             if (!occurrences.TryClaim(task.TaskId, task.NextExecutionAt, now, out var occurrence)) continue;

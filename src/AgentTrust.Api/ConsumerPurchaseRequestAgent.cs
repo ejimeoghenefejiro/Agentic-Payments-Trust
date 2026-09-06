@@ -17,6 +17,7 @@ public sealed record ConsumerPurchasePlan(string Status,string Summary,string Me
     string InteractionDecision=PurchaseInteractionDecision.Clarify,bool HasSubstitutions=false);
 public static class PurchasePlanGuard
 {
+    private static readonly string[] DeliveryTerms=["delivery","standard delivery","express delivery","delivery charge","delivery fee","shipping","shipping fee"];
     public static ConsumerPurchasePlan Normalize(ConsumerPurchasePlan plan)=>plan with
     {
         Status=string.IsNullOrWhiteSpace(plan.Status)?PurchasePlanningStatus.NeedsInput:plan.Status,
@@ -24,6 +25,66 @@ public static class PurchasePlanGuard
         Items=plan.Items??[],Questions=plan.Questions??[],ToolsUsed=plan.ToolsUsed??[]
     };
     public static bool HasMalformedItems(ConsumerPurchasePlan plan)=>plan.Items is null||plan.Items.Any(x=>x is null||string.IsNullOrWhiteSpace(x.SearchTerm)||x.Quantity<=0);
+    public static bool IsDeliveryItem(PlannedPurchaseItem item)=>DeliveryTerms.Any(term=>item.SearchTerm.Trim().Equals(term,StringComparison.OrdinalIgnoreCase));
+    public static bool ClaimsDeliveryUnavailable(ConsumerPurchasePlan plan)
+    {
+        var conclusion=$"{plan.Summary} {plan.Message}";
+        return plan.Status!=PurchasePlanningStatus.Ready&&conclusion.Contains("delivery",StringComparison.OrdinalIgnoreCase)&&
+               (conclusion.Contains("unavailable",StringComparison.OrdinalIgnoreCase)||conclusion.Contains("no available",StringComparison.OrdinalIgnoreCase)||
+                conclusion.Contains("no delivery",StringComparison.OrdinalIgnoreCase)||conclusion.Contains("cannot be calculated",StringComparison.OrdinalIgnoreCase));
+    }
+    public static bool TryReplaceUnsupportedDeliveryConclusion(string instruction,IReadOnlyList<Product> catalogue,ConsumerPurchasePlan plan,out ConsumerPurchasePlan corrected)
+    {
+        corrected=plan;if(!ClaimsDeliveryUnavailable(plan))return false;
+        if(TryBuildExplicitProductListPlan(instruction,catalogue,out corrected))return true;
+        return TryBuildSingleProductPlan(instruction,catalogue,out corrected);
+    }
+    public static bool TryReplaceContradictoryAffordableConclusion(string instruction,IReadOnlyList<Product> catalogue,ConsumerPurchasePlan plan,out ConsumerPurchasePlan corrected)
+    {
+        corrected=plan;
+        if(plan.Status==PurchasePlanningStatus.Ready||plan.EstimatedTotal is null||plan.EstimatedTotal>plan.MaximumAmount||
+           plan.MaximumAmount<=0||plan.ToolsUsed is null||!plan.ToolsUsed.Contains("price_basket"))return false;
+        ConsumerPurchasePlan grounded;
+        if(!TryBuildExplicitProductListPlan(instruction,catalogue,out grounded)&&!TryBuildSingleProductPlan(instruction,catalogue,out grounded))return false;
+        if(grounded.Status!=PurchasePlanningStatus.Ready||grounded.EstimatedTotal is null||grounded.EstimatedTotal>grounded.MaximumAmount||
+           grounded.Items.Count==0||HasMalformedItems(grounded)||HasUnavailableItems(grounded,catalogue))return false;
+        corrected=grounded with{Summary="Affordable basket verified",Message=$"The merchant independently verified the complete basket at £{grounded.EstimatedTotal:0.00}, within the £{grounded.MaximumAmount:0.00} budget."};
+        return true;
+    }
+    public static bool HasUnavailableItems(ConsumerPurchasePlan plan,IReadOnlyList<Product> catalogue)=>plan.Items.Any(item=>!catalogue.Any(product=>product.AvailableQuantity>=item.Quantity&&
+        (product.ProductId.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)||product.Description.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)||product.Tags.Any(tag=>tag.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)))));
+    public static bool TryBuildSingleProductPlan(string instruction,IReadOnlyList<Product> catalogue,out ConsumerPurchasePlan plan)
+    {
+        plan=null!;var budgetMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var productMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(.+?)(?=\s+(?:for\s+)?(?:my\s+)?budget\b|\s+under\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if(!budgetMatch.Success||!productMatch.Success)return false;var budget=decimal.Parse(budgetMatch.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture);var requested=productMatch.Groups[1].Value.Trim();if(requested.Length==0||requested.Contains(',')||System.Text.RegularExpressions.Regex.IsMatch(requested,@"\band\b|\bto make\b|\bfor\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+people\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
+        var (query,quantity)=NormalizeProductRequest(requested);var product=catalogue.Where(x=>x.AvailableQuantity>=quantity&&(x.ProductId.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Description.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Tags.Any(t=>t.Contains(query,StringComparison.OrdinalIgnoreCase)))).OrderBy(x=>x.UnitPrice).FirstOrDefault();
+        if(product is null){plan=new(PurchasePlanningStatus.NeedsInput,"Product not found",$"I could not find an available merchant product matching '{query}'.",budget,"GBP",[],[$"Would you like a similar alternative to {query}?"],null,["search_catalogue"]);return true;}
+        var tools=new PurchasePlanningPlugin(catalogue,40);tools.Search(query);var item=new PlannedPurchaseItem(product.ProductId,quantity);var priced=tools.Price(JsonSerializer.Serialize(new[]{item}));using var document=JsonDocument.Parse(priced);var total=document.RootElement.GetProperty("total").GetDecimal();
+        plan=total<=budget?new(PurchasePlanningStatus.Ready,$"Best-value {query}",$"The merchant verified {product.Description} at £{total:0.00} including delivery, within the £{budget:0.00} budget.",budget,"GBP",[item],[],total,tools.ToolsUsed.ToArray())
+            :new(PurchasePlanningStatus.NeedsInput,$"{query} exceeds budget",$"The cheapest available {query} costs £{total:0.00} including delivery, above the £{budget:0.00} budget.",budget,"GBP",[item],["Would you like to increase the budget?"],total,tools.ToolsUsed.ToArray());return true;
+    }
+    public static bool TryBuildExplicitProductListPlan(string instruction,IReadOnlyList<Product> catalogue,out ConsumerPurchasePlan plan)
+    {
+        plan=null!;var budgetMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var listMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(.+?)(?=\s+to\s+make\b|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if(!budgetMatch.Success||!listMatch.Success)return false;var raw=System.Text.RegularExpressions.Regex.Replace(listMatch.Groups[1].Value.Trim(),@"^enough\s+","",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if(!raw.Contains(',')&&!System.Text.RegularExpressions.Regex.IsMatch(raw,@"\band\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
+        var terms=System.Text.RegularExpressions.Regex.Split(raw,@"\s*,\s*|\s+and\s+",System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(x=>System.Text.RegularExpressions.Regex.Replace(x.Trim().TrimEnd('.','!','?'),@"^and\s+","",System.Text.RegularExpressions.RegexOptions.IgnoreCase)).Where(x=>x.Length>0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();if(terms.Length<2)return false;
+        var budget=decimal.Parse(budgetMatch.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture);var selected=new List<PlannedPurchaseItem>();var missing=new List<string>();var normalized=terms.Select(term=>(Original:term,Parsed:NormalizeProductRequest(term))).ToArray();
+        foreach(var term in normalized){var (query,quantity)=term.Parsed;var product=catalogue.Where(x=>x.AvailableQuantity>=quantity&&(x.ProductId.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Description.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Tags.Any(t=>t.Contains(query,StringComparison.OrdinalIgnoreCase)))).OrderBy(x=>x.UnitPrice).FirstOrDefault();if(product is null)missing.Add(term.Original);else selected.Add(new(product.ProductId,quantity));}
+        var tools=new PurchasePlanningPlugin(catalogue,40);tools.SearchMany(JsonSerializer.Serialize(normalized.Select(x=>x.Parsed.Query)));if(missing.Count>0){plan=new(PurchasePlanningStatus.NeedsInput,"Some products were not found",$"I could not find: {string.Join(", ",missing)}.",budget,"GBP",[],[$"Would you accept alternatives for {string.Join(", ",missing)}?"],null,tools.ToolsUsed.ToArray());return true;}
+        var priced=tools.Price(JsonSerializer.Serialize(selected));using var document=JsonDocument.Parse(priced);var total=document.RootElement.GetProperty("total").GetDecimal();
+        plan=total<=budget?new(PurchasePlanningStatus.Ready,"Complete shopping list verified",$"The merchant verified all {selected.Count} requested products at £{total:0.00} including delivery, within the £{budget:0.00} budget.",budget,"GBP",selected,[],total,tools.ToolsUsed.ToArray())
+            :new(PurchasePlanningStatus.NeedsInput,"Shopping list exceeds budget",$"The cheapest complete basket costs £{total:0.00} including delivery, above the £{budget:0.00} budget.",budget,"GBP",selected,["Would you like cheaper substitutions or a higher budget?"],total,tools.ToolsUsed.ToArray());return true;
+    }
+    private static (string Query,int Quantity) NormalizeProductRequest(string requested)
+    {
+        var match=System.Text.RegularExpressions.Regex.Match(requested.Trim(),@"^(?<count>\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:(?:packs?|bottles?|boxes?|bags?|tins?|cans?|jars?|cartons?|loaf|loaves)\s+of\s+)?(?<product>.+)$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if(!match.Success)return(requested.Trim(),1);var counts=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase){{"a",1},{"an",1},{"one",1},{"two",2},{"three",3},{"four",4},{"five",5},{"six",6},{"seven",7},{"eight",8},{"nine",9},{"ten",10}};
+        var value=match.Groups["count"].Value;var quantity=int.TryParse(value,out var numeric)?numeric:counts[value];return(match.Groups["product"].Value.Trim(),Math.Max(quantity,1));
+    }
     public static bool TreatsOptionalIngredientAsRequired(ConsumerPurchasePlan plan,string instruction)=>
         plan.Status==PurchasePlanningStatus.Impossible&&instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)&&
         plan.Message.Contains("cheese",StringComparison.OrdinalIgnoreCase)&&
@@ -54,11 +115,11 @@ public interface IConsumerPurchaseRequestAgent{Task<ConsumerPurchasePlan> PlanAs
 public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
 {
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true};
-    private readonly IConsumerPlanningStore _store;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
+    private readonly IConsumerPlanningStore _store;private readonly IConsumerMemoryService? _memory;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
     private const int DefaultMaximumToolCalls=40;private const int DefaultMaximumReasoningTurns=40;
-    public ConsumerPurchaseRequestAgent(IConsumerPlanningStore store,IConfiguration configuration)
+    public ConsumerPurchaseRequestAgent(IConsumerPlanningStore store,IConfiguration configuration,IConsumerMemoryService? memory=null)
     {
-        _store=store;_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
+        _store=store;_memory=memory;_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
         _maximumToolCalls=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumToolCalls",DefaultMaximumToolCalls),8,80);
         _maximumReasoningTurns=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumReasoningTurns",DefaultMaximumReasoningTurns),8,40);
         _planningTimeoutSeconds=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:TimeoutSeconds",90),30,180);
@@ -69,7 +130,10 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
         var now=DateTimeOffset.UtcNow;var policy=ApplyPolicyInstruction(_store.GetPolicy(principal),instruction,now);_store.SavePolicy(policy);var conversation=conversationId is null?null:_store.FindOwned(conversationId,principal);
         if(conversationId is not null&&conversation is null)throw new UnauthorizedAccessException("Conversation not found or belongs to another principal.");
         var state=NormalizeState(conversation is null?NewState(instruction):JsonSerializer.Deserialize<ConsumerPlanningState>(conversation.StateJson,JsonOptions)??NewState(instruction));
-        foreach(var preference in _store.Preferences(principal))state.Constraints.TryAdd(preference.Key,preference.Value);LearnConstraints(state.Constraints,instruction);conversation??=_store.Create(principal,instruction,JsonSerializer.Serialize(state),now);
+        foreach(var preference in _store.Preferences(principal))state.Constraints.TryAdd(preference.Key,preference.Value);
+        var recalled=_memory is null?Array.Empty<ConsumerMemoryMatch>():await _memory.RetrieveAsync(principal,instruction,cancellationToken:token);
+        foreach(var match in recalled){var memory=match.Memory;state.Constraints[$"memory:{memory.Kind}:{memory.Subject}"]=$"{memory.Polarity}: {memory.Content} (confidence {memory.Confidence:0.00}; {memory.Provenance})";}
+        LearnConstraints(state.Constraints,instruction);conversation??=_store.Create(principal,instruction,JsonSerializer.Serialize(state),now);_memory?.CaptureCorrections(principal,instruction,conversation.ConversationId);
         foreach(var constraint in state.Constraints)_store.Remember(principal,constraint.Key,constraint.Value,conversation.ConversationId,now);
         var sequence=_store.Turns(conversation.ConversationId).Count+1;_store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence++,"user","message",instruction,null,null,null,now));
         ConsumerPurchasePlan? plan=null;
@@ -82,8 +146,19 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
         var completeInstruction=string.Join("\n",new[]{state.Objective,instruction});
         plan??=_allowDeterministicFallback||IsSupportedMeal(completeInstruction)?Fallback(completeInstruction,catalogue):Unavailable(instruction);
         plan=PurchasePlanGuard.Normalize(plan);
+        if(PurchasePlanGuard.TryReplaceUnsupportedDeliveryConclusion(completeInstruction,catalogue,plan,out var deliveryCorrectedPlan))
+            plan=deliveryCorrectedPlan;
+        if(PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion(completeInstruction,catalogue,plan,out var affordabilityCorrectedPlan))
+            plan=affordabilityCorrectedPlan;
         if(plan.Status==PurchasePlanningStatus.Impossible&&IsSupportedMeal(completeInstruction)&&!HasGroundedImpossibilityEvidence(PurchasePlanningPlugin.LastCalls))
             plan=Fallback(completeInstruction,catalogue);
+        if(plan.Status==PurchasePlanningStatus.Ready&&TryCanonicalizePricedBasket(plan,PurchasePlanningPlugin.LastCalls,out var canonicalPlan))
+            plan=canonicalPlan;
+        if(plan.Status==PurchasePlanningStatus.Ready&&PurchasePlanGuard.HasUnavailableItems(plan,catalogue))
+        {
+            if(PurchasePlanGuard.TryBuildExplicitProductListPlan(completeInstruction,catalogue,out var listPlan))plan=listPlan;
+            else if(PurchasePlanGuard.TryBuildSingleProductPlan(completeInstruction,catalogue,out var groundedPlan))plan=groundedPlan;
+        }
         if(PurchasePlanGuard.HasMalformedItems(plan))
             plan=plan with{Status=PurchasePlanningStatus.NeedsInput,Summary="Invalid basket rejected",Message="The planner returned an invalid basket. No purchase will be attempted.",Items=[],Questions=["Please retry the request."]};
         if(PurchasePlanGuard.HasContradictoryBudgetConclusion(plan,catalogue,PurchasePlanningPlugin.LastCalls))
@@ -93,7 +168,8 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
         {
             if(plan.Items.Count==0||PurchasePlanGuard.HasMalformedItems(plan)||!plan.ToolsUsed.Contains("price_basket"))throw new InvalidOperationException("A ready plan must contain valid items priced through the catalogue tool.");
             var searchable=catalogue.SelectMany(x=>x.Tags.Append(x.Description).Append(x.ProductId)).ToArray();
-            if(plan.Items.Any(i=>!searchable.Any(v=>v.Contains(i.SearchTerm,StringComparison.OrdinalIgnoreCase))))throw new InvalidOperationException("The agent proposed an unavailable catalogue item.");
+            if(plan.Items.Any(i=>!searchable.Any(v=>v.Contains(i.SearchTerm,StringComparison.OrdinalIgnoreCase))))
+                plan=plan with{Status=PurchasePlanningStatus.NeedsInput,Summary="Product could not be verified",Message="I could not match the proposed product to the merchant catalogue. No purchase will be attempted.",Items=[],Questions=["Would you like me to search for a similar available product?"]};
             if(plan.EstimatedTotal is null||plan.EstimatedTotal>plan.MaximumAmount)throw new InvalidOperationException("The agent marked an over-budget basket ready.");
             var violation=FindConstraintViolation(plan,state.Constraints,catalogue);
             if(violation is not null)
@@ -141,14 +217,25 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
             Set hasSubstitutions=true whenever the proposed basket replaces a requested or preferred item.
             """);
         history.AddUserMessage($"Persistent investigation state:\n{JsonSerializer.Serialize(state)}\n\nLatest user message:\n{instruction}");
+        var completedCalls=new HashSet<string>(StringComparer.Ordinal);var duplicateCalls=0;
         for(var turn=1;turn<=_maximumReasoningTurns;turn++)
         {
             var response=await chat.GetChatMessageContentAsync(history,kernel:kernel,cancellationToken:token);var text=response.Content??"";var start=text.IndexOf('{');var end=text.LastIndexOf('}');if(start<0||end<=start)return null;var json=text[start..(end+1)];
             using var document=JsonDocument.Parse(json);var root=document.RootElement;var action=root.GetProperty("action").GetString()?.ToUpperInvariant();history.AddAssistantMessage(json);
+            if(action is "SEARCH" or "SEARCH_MANY" or "RECIPE" or "PRICE")
+            {
+                var signature=$"{action}:{root.GetRawText()}";if(!completedCalls.Add(signature)){duplicateCalls++;history.AddUserMessage("APPLICATION VALIDATION: This identical tool call already completed. Use its existing evidence, choose a different investigation, or finish.");if(duplicateCalls>=3)return null;continue;}
+            }
             if(action=="SEARCH"){var query=root.GetProperty("query").GetString()??"";history.AddUserMessage($"TOOL search_catalogue RESULT: {tools.Search(query)}");continue;}
             if(action=="SEARCH_MANY"){var queries=root.GetProperty("queries").GetRawText();history.AddUserMessage($"TOOL search_catalogue_batch RESULT: {tools.SearchMany(queries)}");continue;}
             if(action=="RECIPE"){var meal=root.GetProperty("meal").GetString()??state.Objective;history.AddUserMessage($"TOOL discover_recipe RESULT: {tools.DiscoverRecipe(meal)}");continue;}
-            if(action=="PRICE"){var items=root.GetProperty("items").GetRawText();history.AddUserMessage($"TOOL price_basket RESULT: {tools.Price(items)}");continue;}
+            if(action=="PRICE")
+            {
+                var items=root.GetProperty("items").GetRawText();var priced=tools.Price(items);history.AddUserMessage($"TOOL price_basket RESULT: {priced}");
+                var budget=ExtractBudget($"{instruction}\n{state.Objective}");
+                if(tools.TryBuildReadyPlan(priced,budget,turn,out var verified))return verified;
+                continue;
+            }
             if(action=="FINAL"&&root.TryGetProperty("plan",out var planJson))
             {
                 var plan=JsonSerializer.Deserialize<ConsumerPurchasePlan>(planJson.GetRawText(),JsonOptions);
@@ -205,6 +292,8 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
 
     private static ConsumerPurchasePlan Fallback(string instruction,IReadOnlyList<Product> catalogue)
     {
+        if(PurchasePlanGuard.TryBuildExplicitProductListPlan(instruction,catalogue,out var listedPurchase))return listedPurchase;
+        if(PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out var directPurchase))return directPurchase;
         var match=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var budget=match.Success?decimal.Parse(match.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture):0;
         if(!instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)||budget<=0)
@@ -221,6 +310,21 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
     private static bool IsSupportedMeal(string instruction)=>instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase);
     private static bool HasGroundedImpossibilityEvidence(IReadOnlyList<PurchasePlanningPlugin.ToolCall> calls)=>
         calls.Any(x=>x.Name is "search_catalogue" or "search_catalogue_batch")&&calls.Any(x=>x.Name=="price_basket");
+    private static bool TryCanonicalizePricedBasket(ConsumerPurchasePlan plan,IReadOnlyList<PurchasePlanningPlugin.ToolCall> calls,out ConsumerPurchasePlan canonical)
+    {
+        canonical=plan;var priced=calls.LastOrDefault(x=>x.Name=="price_basket");if(priced is null)return false;
+        try
+        {
+            using var document=JsonDocument.Parse(priced.Output);var root=document.RootElement;
+            if(!root.TryGetProperty("valid",out var valid)||!valid.GetBoolean()||!root.TryGetProperty("selected",out var selected)||selected.GetArrayLength()==0)return false;
+            var items=selected.EnumerateArray().Select(x=>new PlannedPurchaseItem(x.GetProperty("productId").GetString()!,x.GetProperty("quantity").GetInt32())).ToArray();
+            if(items.Any(x=>string.IsNullOrWhiteSpace(x.SearchTerm)||x.Quantity<=0))return false;
+            canonical=plan with{Items=items,EstimatedTotal=root.GetProperty("total").GetDecimal()};return true;
+        }
+        catch(JsonException){return false;}
+        catch(InvalidOperationException){return false;}
+        catch(KeyNotFoundException){return false;}
+    }
 }
 
 public sealed class PurchasePlanningPlugin
@@ -228,7 +332,7 @@ public sealed class PurchasePlanningPlugin
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true,PropertyNamingPolicy=JsonNamingPolicy.CamelCase};
     public sealed record ToolCall(string Name,string Input,string Output);private static readonly AsyncLocal<List<ToolCall>?> Calls=new();public static IReadOnlyList<ToolCall> LastCalls=>Calls.Value??[];
     public static void ClearCalls()=>Calls.Value=[];
-    private readonly IReadOnlyList<Product> _catalogue;private readonly IReadOnlyDictionary<string,string> _constraints;private readonly List<string> _used=[];private readonly int _maximumCalls;private int _calls;public IReadOnlyList<string> ToolsUsed=>_used;
+    private readonly IReadOnlyList<Product> _catalogue;private readonly IReadOnlyDictionary<string,string> _constraints;private readonly List<string> _used=[];private readonly int _maximumCalls;private int _calls;private string[] _requiredIngredients=[];public IReadOnlyList<string> ToolsUsed=>_used;
     public PurchasePlanningPlugin(IReadOnlyList<Product> catalogue,int maximumCalls=12,IReadOnlyDictionary<string,string>? constraints=null){_catalogue=catalogue;_maximumCalls=maximumCalls;_constraints=constraints??new Dictionary<string,string>();Calls.Value=[];}
     [KernelFunction("get_user_constraints"),Description("Read durable inventory-at-home, serving count, allergy, nutrition, diet and accepted-substitution constraints.")]
     public string Constraints()
@@ -240,10 +344,28 @@ public sealed class PurchasePlanningPlugin
     [KernelFunction("discover_recipe"),Description("Turn a meal request into essential and optional ingredient search terms before catalogue lookup. This proposes ingredients only; merchant tools must confirm products and prices.")]
     public string DiscoverRecipe([Description("Meal or dish requested by the user")]string meal)
     {
-        object recipe=meal.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)
-            ?new{meal="chicken wraps",essential=new[]{"chicken","wraps","lettuce","tomato","sauce"},optional=new[]{"cheese","onion","pepper"},note="Adjust quantities for the requested serving count."}
+        _requiredIngredients=meal.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)?["chicken","wraps","lettuce","tomato","sauce"]:[];
+        object recipe=_requiredIngredients.Length>0
+            ?new{meal="chicken wraps",essential=_requiredIngredients,optional=new[]{"cheese","onion","pepper"},note="Adjust quantities for the requested serving count."}
             :new{meal,essential=Array.Empty<string>(),optional=Array.Empty<string>(),note="No verified template is available. Propose a recipe, then verify every ingredient through the merchant catalogue."};
         var output=JsonSerializer.Serialize(recipe,JsonOptions);Track("discover_recipe",meal,output);return output;
+    }
+    public bool TryBuildReadyPlan(string pricedJson,decimal budget,int reasoningTurn,out ConsumerPurchasePlan plan)
+    {
+        plan=null!;if(budget<=0||_requiredIngredients.Length==0)return false;
+        try
+        {
+            using var document=JsonDocument.Parse(pricedJson);var root=document.RootElement;
+            if(!root.GetProperty("valid").GetBoolean()||root.GetProperty("total").GetDecimal()>budget)return false;
+            var selected=root.GetProperty("selected").EnumerateArray().Select(x=>new{ProductId=x.GetProperty("productId").GetString()!,Quantity=x.GetProperty("quantity").GetInt32()}).ToArray();
+            var products=selected.Select(x=>_catalogue.FirstOrDefault(p=>p.ProductId.Equals(x.ProductId,StringComparison.OrdinalIgnoreCase))).ToArray();
+            if(products.Any(x=>x is null)||!_requiredIngredients.All(term=>products.Any(p=>p is not null&&(p.ProductId.Contains(term,StringComparison.OrdinalIgnoreCase)||p.Description.Contains(term,StringComparison.OrdinalIgnoreCase)||p.Tags.Any(t=>t.Contains(term,StringComparison.OrdinalIgnoreCase))))))return false;
+            var total=root.GetProperty("total").GetDecimal();plan=new(PurchasePlanningStatus.Ready,"Complete basket verified",$"The merchant verified a complete best-value basket at £{total:0.00}, within the £{budget:0.00} budget.",budget,"GBP",selected.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray(),[],total,ToolsUsed.ToArray(),null,reasoningTurn);
+            return true;
+        }
+        catch(JsonException){return false;}
+        catch(InvalidOperationException){return false;}
+        catch(KeyNotFoundException){return false;}
     }
     [KernelFunction("search_catalogue"),Description("Search available grocery products and prices. Call repeatedly for ingredients and alternatives.")]
     public string Search([Description("Ingredient or product search phrase")]string query)
@@ -263,7 +385,9 @@ public sealed class PurchasePlanningPlugin
     [KernelFunction("price_basket"),Description("Calculate a proposed basket total including cheapest delivery. Input is JSON array of searchTerm and quantity.")]
     public string Price([Description("JSON array such as [{\"searchTerm\":\"chicken\",\"quantity\":1}]")]string itemsJson)
     {
-        var items=JsonSerializer.Deserialize<List<PlannedPurchaseItem>>(itemsJson,JsonOptions)??[];var selected=new List<object>();decimal subtotal=0;
+        var supplied=JsonSerializer.Deserialize<List<PlannedPurchaseItem>>(itemsJson,JsonOptions)??[];
+        var items=supplied.Where(x=>!PurchasePlanGuard.IsDeliveryItem(x)).ToArray();var selected=new List<object>();decimal subtotal=0;
+        if(items.Length==0){var empty=JsonSerializer.Serialize(new{valid=false,missing="purchasable product"},JsonOptions);Track("price_basket",itemsJson,empty);return empty;}
         foreach(var item in items){var product=_catalogue.Where(x=>x.AvailableQuantity>=item.Quantity&&(x.Description.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)||x.ProductId.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)||x.Tags.Any(t=>t.Contains(item.SearchTerm,StringComparison.OrdinalIgnoreCase)))).OrderBy(x=>x.UnitPrice).FirstOrDefault();if(product is null){var missing=JsonSerializer.Serialize(new{valid=false,missing=item.SearchTerm},JsonOptions);Track("price_basket",itemsJson,missing);return missing;}var line=product.UnitPrice*item.Quantity;subtotal+=line;selected.Add(new{product.ProductId,product.Description,item.Quantity,product.UnitPrice,lineTotal=line});}
         var output=JsonSerializer.Serialize(new{valid=true,selected,subtotal,deliveryFee=2.50m,total=subtotal+2.50m,currency="GBP"},JsonOptions);Track("price_basket",itemsJson,output);return output;
     }

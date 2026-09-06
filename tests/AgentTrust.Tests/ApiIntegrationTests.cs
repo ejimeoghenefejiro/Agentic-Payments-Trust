@@ -67,6 +67,20 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Contains("discover_recipe",plugin.ToolsUsed);
     }
     [Fact]
+    public void PurchasePlanningPlugin_StopsAfterCompleteMerchantPricedBasket()
+    {
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("chicken","Chicken breast",4m,"GBP",10,new HashSet<string>{"chicken"}),new("wraps","Tortilla wraps",1m,"GBP",10,new HashSet<string>{"wraps"}),
+            new("lettuce","Iceberg lettuce",1m,"GBP",10,new HashSet<string>{"lettuce"}),new("tomato","Salad tomatoes",1m,"GBP",10,new HashSet<string>{"tomato"}),
+            new("garlic-sauce","Garlic mayonnaise",1m,"GBP",10,new HashSet<string>{"sauce"})
+        ];
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40);plugin.DiscoverRecipe("chicken wraps");
+        var priced=plugin.Price("[{\"searchTerm\":\"chicken\",\"quantity\":1},{\"searchTerm\":\"wraps\",\"quantity\":1},{\"searchTerm\":\"lettuce\",\"quantity\":1},{\"searchTerm\":\"tomato\",\"quantity\":1},{\"searchTerm\":\"sauce\",\"quantity\":1}]");
+        Assert.True(plugin.TryBuildReadyPlan(priced,16.68m,4,out var plan));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,plan.Status);Assert.Equal(10.50m,plan.EstimatedTotal);Assert.Equal(4,plan.ReasoningTurns);Assert.All(plan.Items,x=>Assert.Contains(catalogue,p=>p.ProductId==x.SearchTerm));
+    }
+    [Fact]
     public void PurchasePlanGuard_CorrectsOnlyAnEvidenceBackedBudgetContradiction()
     {
         AgentTrust.Commerce.Product[] catalogue=[new("wraps","Wraps",5m,"GBP",10,new HashSet<string>{"wraps"})];
@@ -75,6 +89,73 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var plan=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Wraps","The £7.50 total exceeds the £20 budget",20,"GBP",[new("wraps",1)],[],7.50m,["price_basket"]);
         Assert.True(AgentTrust.Api.PurchasePlanGuard.HasContradictoryBudgetConclusion(plan,catalogue,AgentTrust.Api.PurchasePlanningPlugin.LastCalls));
         Assert.False(AgentTrust.Api.PurchasePlanGuard.HasContradictoryBudgetConclusion(plan with{MaximumAmount=7},catalogue,AgentTrust.Api.PurchasePlanningPlugin.LastCalls));
+    }
+    [Fact]
+    public void PurchasePlanningPlugin_DeliveryIsNeverTreatedAsCatalogueProduct()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})];
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40);
+        using var priced=JsonDocument.Parse(plugin.Price("[{\"searchTerm\":\"wholemeal bread\",\"quantity\":1},{\"searchTerm\":\"Delivery\",\"quantity\":1}]"));
+        var root=priced.RootElement;Assert.True(root.GetProperty("valid").GetBoolean());Assert.Equal(1.40m,root.GetProperty("subtotal").GetDecimal());
+        Assert.Equal(2.50m,root.GetProperty("deliveryFee").GetDecimal());Assert.Equal(3.90m,root.GetProperty("total").GetDecimal());Assert.Single(root.GetProperty("selected").EnumerateArray());
+    }
+    [Fact]
+    public void PurchasePlanGuard_ReplacesUnsupportedDeliveryConclusionWithVerifiedQuote()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})];
+        var unsupported=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Delivery unavailable","There are no available standard delivery options.",4.10m,"GBP",[],[],0,[]);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryReplaceUnsupportedDeliveryConclusion("I have a budget of £4.10. Please buy 1 loaf of wholemeal bread.",catalogue,unsupported,out var corrected));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,corrected.Status);Assert.Equal(3.90m,corrected.EstimatedTotal);
+        Assert.Equal("bread-wholemeal",Assert.Single(corrected.Items).SearchTerm);Assert.Contains("price_basket",corrected.ToolsUsed);
+    }
+    [Fact]
+    public void PurchasePlanGuard_ReconstructsEmptyBasketFromGroundedAffordableRequest()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})];
+        var contradictory=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"The total exceeds your budget","The £5.30 total is within your £10.10 budget, but validation failed.",10.10m,"GBP",[],[],5.30m,["search_catalogue","price_basket"]);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion("I have a budget of £10.10. Please buy 2 loaves of wholemeal bread.",catalogue,contradictory,out var corrected));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,corrected.Status);Assert.Equal(5.30m,corrected.EstimatedTotal);
+        var item=Assert.Single(corrected.Items);Assert.Equal("bread-wholemeal",item.SearchTerm);Assert.Equal(2,item.Quantity);
+    }
+    [Fact]
+    public void PurchasePlanGuard_NeverReconstructsUnverifiedOrOverBudgetBasket()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})];
+        var noQuote=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Failed","Failed",10.10m,"GBP",[],[],5.30m,["search_catalogue"]);
+        Assert.False(AgentTrust.Api.PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion("I have a budget of £10.10. Please buy 2 loaves of wholemeal bread.",catalogue,noQuote,out _));
+        var overBudget=noQuote with{MaximumAmount=5m,EstimatedTotal=5.30m,ToolsUsed=["price_basket"]};
+        Assert.False(AgentTrust.Api.PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion("I have a budget of £5. Please buy 2 loaves of wholemeal bread.",catalogue,overBudget,out _));
+    }
+    [Fact]
+    public void PurchasePlanGuard_GroundsDirectProductRequestAndNeverInventsProductId()
+    {
+        AgentTrust.Commerce.Product[] catalogue=[new("chicken-breast-500g","Chicken breast 500g",4.75m,"GBP",10,new HashSet<string>{"chicken"})];
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan("Buy chicken for my budget £18",catalogue,out var plan));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,plan.Status);Assert.Equal("chicken-breast-500g",Assert.Single(plan.Items).SearchTerm);Assert.Equal(7.25m,plan.EstimatedTotal);
+        Assert.Contains("search_catalogue",plan.ToolsUsed);Assert.Contains("price_basket",plan.ToolsUsed);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan("I have £16.40. Please buy one pack of chicken breast.",catalogue,out var packaged));
+        Assert.Equal("chicken-breast-500g",Assert.Single(packaged.Items).SearchTerm);Assert.Equal(1,packaged.Items[0].Quantity);Assert.Equal(7.25m,packaged.EstimatedTotal);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan("Buy two packs of chicken breast for my budget £20",catalogue,out var doubled));
+        Assert.Equal(2,Assert.Single(doubled.Items).Quantity);Assert.Equal(12m,doubled.EstimatedTotal);
+        AgentTrust.Commerce.Product[] breadCatalogue=[new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})];
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan("I have a budget of £10. Please buy three loaves of wholemeal bread.",breadCatalogue,out var loaves));
+        Assert.Equal("bread-wholemeal",Assert.Single(loaves.Items).SearchTerm);Assert.Equal(3,loaves.Items[0].Quantity);Assert.Equal(6.70m,loaves.EstimatedTotal);
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan("Buy salmon for my budget £18",catalogue,out var missing));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,missing.Status);Assert.Empty(missing.Items);
+    }
+    [Fact]
+    public void PurchasePlanGuard_SplitsAndGroundsExplicitMultiProductMealRequest()
+    {
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("chicken-breast-500g","Chicken breast 500g",4.75m,"GBP",10,new HashSet<string>{"chicken","chicken breast"}),new("lettuce-iceberg","Iceberg lettuce",.95m,"GBP",10,new HashSet<string>{"lettuce"}),
+            new("tomatoes-6","Salad tomatoes 6 pack",1.25m,"GBP",10,new HashSet<string>{"tomatoes"}),new("garlic-sauce","Garlic mayonnaise sauce",1.50m,"GBP",10,new HashSet<string>{"garlic mayonnaise sauce","sauce"})
+        ];
+        var instruction="I have a budget of £16.40. Please buy enough chicken breast, lettuce, tomatoes, and garlic mayonnaise sauce to make a chicken salad for four people.";
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildExplicitProductListPlan(instruction,catalogue,out var plan));
+        Assert.True(plan.Status==AgentTrust.Api.PurchasePlanningStatus.Ready,plan.Message);Assert.Equal(10.95m,plan.EstimatedTotal);Assert.Equal(4,plan.Items.Count);
+        Assert.Equal(catalogue.Select(x=>x.ProductId).Order(),plan.Items.Select(x=>x.SearchTerm).Order());Assert.Contains("search_catalogue_batch",plan.ToolsUsed);Assert.Contains("price_basket",plan.ToolsUsed);
+        Assert.False(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out _));
     }
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;

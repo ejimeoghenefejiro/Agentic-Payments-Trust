@@ -284,6 +284,7 @@ public sealed class ConsumerPaymentMethodEntity
     public string PrincipalId { get; set; } = "";
     public string Provider { get; set; } = "";
     public string ProviderToken { get; set; } = "";
+    public string? ProviderCustomerReference { get; set; }
     public string CardBrand { get; set; } = "";
     public string Last4 { get; set; } = "";
     public int ExpiryMonth { get; set; }
@@ -311,4 +312,20 @@ public sealed class ConsumerPreferenceMemoryEntity
 public sealed class ConsumerConversationPolicyEntity
 {
     public string PrincipalId{get;set;}="";public string InteractionMode{get;set;}="AUTO_WHEN_SAFE";public bool AskBeforeSubstitutions{get;set;}public bool ShowBasketBeforePayment{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerMemoryEntity
+{
+    public string MemoryId{get;set;}="";public string PrincipalId{get;set;}="";public string Kind{get;set;}="";public string Polarity{get;set;}="Neutral";public string Subject{get;set;}="";public string Content{get;set;}="";public string Provenance{get;set;}="";public string? SourceConversationId{get;set;}public string? SourcePurchaseIntentId{get;set;}public double Confidence{get;set;}public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset UpdatedAt{get;set;}public DateTimeOffset? ExpiresAt{get;set;}public bool Deleted{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerMemoryRetrievalAuditEntity
+{
+    public string AuditId{get;set;}="";public string PrincipalId{get;set;}="";public string Query{get;set;}="";public string ReturnedMemoryIdsJson{get;set;}="[]";public DateTimeOffset RetrievedAt{get;set;}
+}
+public sealed class ConsumerMemoryOutboxEntity
+{
+    public string OutboxId{get;set;}="";public string MemoryId{get;set;}="";public string PrincipalId{get;set;}="";public string Operation{get;set;}="Upsert";public string Status{get;set;}="Pending";public int Attempts{get;set;}public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset? ProcessedAt{get;set;}public DateTimeOffset? NextAttemptAt{get;set;}public string? LastError{get;set;}public long Version{get;set;}=1;
+}
+public sealed class MandateLimitChangeProposalEntity
+{
+    public string ProposalId{get;set;}="";public string MandateId{get;set;}="";public int BaseMandateVersion{get;set;}public string PrincipalId{get;set;}="";public decimal? PerTransactionLimit{get;set;}public decimal? WeeklyLimit{get;set;}public decimal? MonthlyLimit{get;set;}public string Currency{get;set;}="";public string Status{get;set;}="AwaitingStepUp";public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset ExpiresAt{get;set;}public string RequestedThrough{get;set;}="chat";public DateTimeOffset? AppliedAt{get;set;}public string? AppliedBy{get;set;}public long Version{get;set;}=1;
 }

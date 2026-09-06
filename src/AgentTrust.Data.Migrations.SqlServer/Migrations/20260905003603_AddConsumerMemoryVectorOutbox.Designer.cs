@@ -4,6 +4,7 @@ using AgentTrust.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    partial class AgentTrustDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905003603_AddConsumerMemoryVectorOutbox")]
+    partial class AddConsumerMemoryVectorOutbox
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1134,71 +1137,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("TransactionId");
 
                     b.ToTable("InvestigationStates");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.MandateLimitChangeProposalEntity", b =>
-                {
-                    b.Property<string>("ProposalId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset?>("AppliedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("AppliedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("BaseMandateVersion")
-                        .HasColumnType("int");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("MandateId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<decimal?>("MonthlyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal?>("PerTransactionLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("RequestedThrough")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.Property<decimal?>("WeeklyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.HasKey("ProposalId");
-
-                    b.HasIndex("MandateId", "Status");
-
-                    b.HasIndex("PrincipalId", "Status", "ExpiresAt");
-
-                    b.ToTable("MandateLimitChangeProposals");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.MerchantEntity", b =>

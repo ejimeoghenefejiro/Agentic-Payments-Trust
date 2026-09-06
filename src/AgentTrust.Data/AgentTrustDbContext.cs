@@ -47,6 +47,10 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<ConsumerProductReservationEntity> ConsumerProductReservations=>Set<ConsumerProductReservationEntity>();
     public DbSet<ConsumerPreferenceMemoryEntity> ConsumerPreferenceMemories=>Set<ConsumerPreferenceMemoryEntity>();
     public DbSet<ConsumerConversationPolicyEntity> ConsumerConversationPolicies=>Set<ConsumerConversationPolicyEntity>();
+    public DbSet<ConsumerMemoryEntity> ConsumerMemories=>Set<ConsumerMemoryEntity>();
+    public DbSet<ConsumerMemoryRetrievalAuditEntity> ConsumerMemoryRetrievalAudits=>Set<ConsumerMemoryRetrievalAuditEntity>();
+    public DbSet<ConsumerMemoryOutboxEntity> ConsumerMemoryOutbox=>Set<ConsumerMemoryOutboxEntity>();
+    public DbSet<MandateLimitChangeProposalEntity> MandateLimitChangeProposals=>Set<MandateLimitChangeProposalEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -81,6 +85,8 @@ public sealed class AgentTrustDbContext : DbContext
         {
             b.HasKey(x => new { x.MandateId, x.Version });
             b.HasIndex(x => new { x.PrincipalId, x.Status }); b.HasIndex(x => new { x.AgentId, x.Status });
+            b.Property(x => x.PaymentMethodId).HasMaxLength(450);
+            b.HasOne<ConsumerPaymentMethodEntity>().WithMany().HasForeignKey(x => x.PaymentMethodId).OnDelete(DeleteBehavior.Restrict);
             b.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
             b.Property(x => x.PerTransactionLimit).HasPrecision(18,2); b.Property(x => x.DailyLimit).HasPrecision(18,2);
             b.Property(x => x.WeeklyLimit).HasPrecision(18,2); b.Property(x => x.MonthlyLimit).HasPrecision(18,2);
@@ -256,6 +262,11 @@ public sealed class AgentTrustDbContext : DbContext
         modelBuilder.Entity<ConsumerProductReservationEntity>(b=>{b.HasIndex(x=>new{x.ConversationId,x.ProductId}).IsUnique();b.HasIndex(x=>new{x.Status,x.ExpiresAt});Money(b.Property(x=>x.UnitPrice));});
         Configure<ConsumerPreferenceMemoryEntity>(modelBuilder,x=>x.MemoryId);modelBuilder.Entity<ConsumerPreferenceMemoryEntity>(b=>b.HasIndex(x=>new{x.PrincipalId,x.Key}).IsUnique());
         Configure<ConsumerConversationPolicyEntity>(modelBuilder,x=>x.PrincipalId);
+        Configure<ConsumerMemoryEntity>(modelBuilder,x=>x.MemoryId);
+        modelBuilder.Entity<ConsumerMemoryEntity>(b=>{b.HasIndex(x=>new{x.PrincipalId,x.Kind,x.Subject});b.HasIndex(x=>new{x.PrincipalId,x.Deleted,x.ExpiresAt});});
+        modelBuilder.Entity<ConsumerMemoryRetrievalAuditEntity>(b=>{b.HasKey(x=>x.AuditId);b.HasIndex(x=>new{x.PrincipalId,x.RetrievedAt});});
+        Configure<ConsumerMemoryOutboxEntity>(modelBuilder,x=>x.OutboxId);modelBuilder.Entity<ConsumerMemoryOutboxEntity>(b=>{b.ToTable("ConsumerMemoryOutbox");b.HasIndex(x=>new{x.Status,x.NextAttemptAt,x.CreatedAt});b.HasIndex(x=>new{x.MemoryId,x.Status});});
+        Configure<MandateLimitChangeProposalEntity>(modelBuilder,x=>x.ProposalId);modelBuilder.Entity<MandateLimitChangeProposalEntity>(b=>{b.HasIndex(x=>new{x.PrincipalId,x.Status,x.ExpiresAt});b.HasIndex(x=>new{x.MandateId,x.Status});b.Property(x=>x.PerTransactionLimit).HasPrecision(18,2);b.Property(x=>x.WeeklyLimit).HasPrecision(18,2);b.Property(x=>x.MonthlyLimit).HasPrecision(18,2);});
 
         static void Configure<TEntity>(ModelBuilder builder,
             System.Linq.Expressions.Expression<Func<TEntity, object?>> key) where TEntity : class

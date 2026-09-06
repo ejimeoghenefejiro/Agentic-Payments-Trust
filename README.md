@@ -1096,6 +1096,31 @@ repo.**
 genuinely LLM-orchestrated one via `InvestigationTools` (the Semantic Kernel plugin seam already
 built in Phase 1).
 
+## Capability-driven merchant planning
+
+Consumer planning now has a merchant-neutral extension seam. `MerchantConnectorRegistry` resolves
+connectors by stable merchant ID, while `IMerchantPlanningToolset` exposes only objective expansion,
+search, availability and authoritative quotation. It deliberately exposes no checkout, mandate,
+authorisation or payment operation to the reasoning model.
+
+`ConnectorMerchantPlanningToolset` adapts any `ICommerceConnector` into that restricted planning
+surface. The selected connector supplies the authoritative products, delivery options, subtotal,
+fees, total, currency and quote expiry. The API replaces the model's estimate with that quote before
+the deterministic trust boundary runs. Checkout remains a later application-controlled step and
+still requires an intent-bound `PurchaseAuthorisation`.
+
+Meal/recipe expansion is an optional domain capability (`IObjectiveExpansionCapability`). The demo
+grocery recipe knowledge lives in `GroceryMealObjectiveCapability`; connectors for restaurants,
+transport, travel or other industries do not need to expose it. `DemoGroceryConnector` is registered
+as one connector through the registry rather than injected into the consumer controller directly.
+
+The invariant is:
+
+```text
+agent reasons -> merchant capabilities provide evidence -> merchant issues authoritative quote
+-> deterministic trust layer authorises -> connector executes
+```
+
 ## EF Core migrations
 
 Real migrations now exist, replacing `Database.EnsureCreated()` — the exact gap that caused the
@@ -1189,6 +1214,34 @@ the token without a `Bearer` prefix. Then use this sequence:
 All ownership comes from the authenticated `agenttrust_principal_id` claim. Consumer request DTOs
 do not accept a principal/owner ID. Production must configure a real OIDC authority and audience
 and leave `Authentication:Development:Enabled` disabled.
+
+## Consumer semantic memory (Qdrant + Redis)
+
+SQL remains the source of truth for memories, consent metadata, provenance, expiry, deletion and
+retrieval audits. Qdrant stores embeddings for semantic retrieval; Redis caches retrieval IDs and
+scores for 120 seconds. Qdrant queries always include a `principal_id` payload filter and every
+returned ID is checked against the SQL owner again before it reaches the planner.
+
+Start the local infrastructure:
+
+```powershell
+$env:POSTGRES_PASSWORD="choose-a-local-password"
+$env:OPENAI_API_KEY="your-development-key"
+docker compose up -d postgres redis qdrant
+```
+
+For an API process running directly on the host, set `ConsumerMemory:Enabled=true`; the default
+Qdrant and Redis addresses are `localhost:6333` and `localhost:6379`. The Compose API service
+enables memory automatically and uses the container service names. Apply SQL Server migrations:
+
+```powershell
+dotnet ef database update -p src\AgentTrust.Data.Migrations.SqlServer -s src\AgentTrust.Data.Migrations.SqlServer
+```
+
+Memory writes and deletes enqueue `ConsumerMemoryOutbox` in the same SQL `SaveChanges`. The
+background index worker retries failures with bounded exponential backoff, performs idempotent
+Qdrant upserts/deletes, and invalidates the principal's Redis cache generation only after the
+vector operation succeeds.
 
 ## Known limitations
 

@@ -353,6 +353,145 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("ConsumerConversationPolicies");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryEntity", b =>
+                {
+                    b.Property<string>("MemoryId")
+                        .HasColumnType("text");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Deleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Polarity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceConversationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourcePurchaseIntentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("MemoryId");
+
+                    b.HasIndex("PrincipalId", "Deleted", "ExpiresAt");
+
+                    b.HasIndex("PrincipalId", "Kind", "Subject");
+
+                    b.ToTable("ConsumerMemories");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryOutboxEntity", b =>
+                {
+                    b.Property<string>("OutboxId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MemoryId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OutboxId");
+
+                    b.HasIndex("MemoryId", "Status");
+
+                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt");
+
+                    b.ToTable("ConsumerMemoryOutbox", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryRetrievalAuditEntity", b =>
+                {
+                    b.Property<string>("AuditId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Query")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("RetrievedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReturnedMemoryIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("AuditId");
+
+                    b.HasIndex("PrincipalId", "RetrievedAt");
+
+                    b.ToTable("ConsumerMemoryRetrievalAudits");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentAttemptEntity", b =>
                 {
                     b.Property<string>("PaymentAttemptId")
@@ -439,6 +578,9 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
 
                     b.Property<string>("Provider")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderCustomerReference")
                         .HasColumnType("text");
 
                     b.Property<string>("ProviderToken")
@@ -919,7 +1061,8 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
 
                     b.Property<string>("PaymentMethodId")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
 
                     b.Property<decimal>("PerTransactionLimit")
                         .HasPrecision(18, 2)
@@ -949,6 +1092,8 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .HasColumnType("numeric(18,2)");
 
                     b.HasKey("MandateId", "Version");
+
+                    b.HasIndex("PaymentMethodId");
 
                     b.HasIndex("AgentId", "Status");
 
@@ -987,6 +1132,71 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasIndex("TransactionId");
 
                     b.ToTable("InvestigationStates");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.MandateLimitChangeProposalEntity", b =>
+                {
+                    b.Property<string>("ProposalId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("AppliedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AppliedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("BaseMandateVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("MonthlyLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("PerTransactionLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestedThrough")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal?>("WeeklyLimit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("ProposalId");
+
+                    b.HasIndex("MandateId", "Status");
+
+                    b.HasIndex("PrincipalId", "Status", "ExpiresAt");
+
+                    b.ToTable("MandateLimitChangeProposals");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.MerchantEntity", b =>
@@ -1943,6 +2153,15 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserLogins", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>
+                {
+                    b.HasOne("AgentTrust.Data.ConsumerPaymentMethodEntity", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentMethodId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>

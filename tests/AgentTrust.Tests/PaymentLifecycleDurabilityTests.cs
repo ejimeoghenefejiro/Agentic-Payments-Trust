@@ -64,6 +64,17 @@ public sealed class PaymentLifecycleDurabilityTests : IDisposable
     }
 
     [Fact]
+    public void FinancialMandate_CannotReferenceMissingPaymentMethod()
+    {
+        var now=DateTimeOffset.UtcNow;_db.FinancialMandates.Add(new FinancialMandateEntity
+        {
+            MandateId="mandate-orphan",Version=1,PrincipalId="principal-1",AgentId="agent-1",Merchant="merchant-1",Purpose="groceries",
+            PaymentMethodId="missing-method",PerTransactionLimit=20,Currency="GBP",CreatedAt=now,EffectiveFrom=now,ExpiresAt=now.AddDays(1)
+        });
+        Assert.Throws<DbUpdateException>(()=>_db.SaveChanges());
+    }
+
+    [Fact]
     public void PlanningConversation_TurnsConstraintsAndProductHoldsAreDurable()
     {
         var store=new EfConsumerPlanningStore(_db);var now=DateTimeOffset.UtcNow;var conversation=store.Create("principal_1","Make wraps","{\"inventoryAtHome\":\"sauce\"}",now);

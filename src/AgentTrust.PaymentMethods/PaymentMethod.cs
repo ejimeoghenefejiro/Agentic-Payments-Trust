@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AgentTrust.PaymentMethods;
 
 public enum PaymentMethodStatus
@@ -21,7 +23,8 @@ public sealed record PaymentMethod(
     string Last4,
     int ExpiryMonth,
     int ExpiryYear,
-    PaymentMethodStatus Status)
+    PaymentMethodStatus Status,
+    [property:JsonIgnore]string? ProviderCustomerReference = null)
 {
     public bool IsUsable(DateOnly asOf) =>
         Status == PaymentMethodStatus.Active &&

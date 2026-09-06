@@ -4,6 +4,7 @@ using AgentTrust.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    partial class AgentTrustDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260904200700_AddStripeCustomerReferences")]
+    partial class AddStripeCustomerReferences
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -352,145 +355,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasKey("PrincipalId");
 
                     b.ToTable("ConsumerConversationPolicies");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryEntity", b =>
-                {
-                    b.Property<string>("MemoryId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<double>("Confidence")
-                        .HasColumnType("float");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<bool>("Deleted")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTimeOffset?>("ExpiresAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Polarity")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Provenance")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SourceConversationId")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SourcePurchaseIntentId")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Subject")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.HasKey("MemoryId");
-
-                    b.HasIndex("PrincipalId", "Deleted", "ExpiresAt");
-
-                    b.HasIndex("PrincipalId", "Kind", "Subject");
-
-                    b.ToTable("ConsumerMemories");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryOutboxEntity", b =>
-                {
-                    b.Property<string>("OutboxId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<int>("Attempts")
-                        .HasColumnType("int");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("LastError")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("MemoryId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset?>("NextAttemptAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Operation")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset?>("ProcessedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.HasKey("OutboxId");
-
-                    b.HasIndex("MemoryId", "Status");
-
-                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt");
-
-                    b.ToTable("ConsumerMemoryOutbox", (string)null);
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.ConsumerMemoryRetrievalAuditEntity", b =>
-                {
-                    b.Property<string>("AuditId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Query")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset>("RetrievedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("ReturnedMemoryIdsJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("AuditId");
-
-                    b.HasIndex("PrincipalId", "RetrievedAt");
-
-                    b.ToTable("ConsumerMemoryRetrievalAudits");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.ConsumerPaymentAttemptEntity", b =>
@@ -1063,8 +927,7 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 
                     b.Property<string>("PaymentMethodId")
                         .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("nvarchar(450)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("PerTransactionLimit")
                         .HasPrecision(18, 2)
@@ -1094,8 +957,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("MandateId", "Version");
-
-                    b.HasIndex("PaymentMethodId");
 
                     b.HasIndex("AgentId", "Status");
 
@@ -1134,71 +995,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("TransactionId");
 
                     b.ToTable("InvestigationStates");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.MandateLimitChangeProposalEntity", b =>
-                {
-                    b.Property<string>("ProposalId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTimeOffset?>("AppliedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("AppliedBy")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("BaseMandateVersion")
-                        .HasColumnType("int");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("MandateId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<decimal?>("MonthlyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal?>("PerTransactionLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("RequestedThrough")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.Property<decimal?>("WeeklyLimit")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.HasKey("ProposalId");
-
-                    b.HasIndex("MandateId", "Status");
-
-                    b.HasIndex("PrincipalId", "Status", "ExpiresAt");
-
-                    b.ToTable("MandateLimitChangeProposals");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.MerchantEntity", b =>
@@ -2156,15 +1952,6 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserLogins", (string)null);
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>
-                {
-                    b.HasOne("AgentTrust.Data.ConsumerPaymentMethodEntity", null)
-                        .WithMany()
-                        .HasForeignKey("PaymentMethodId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>

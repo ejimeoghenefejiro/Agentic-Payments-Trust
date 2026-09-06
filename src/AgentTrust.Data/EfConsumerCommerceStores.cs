@@ -161,15 +161,36 @@ public sealed class EfMandateStore : IMandateStore
         {Version=x.Version,DailyLimit=x.DailyLimit,EffectiveFrom=x.EffectiveFrom,SupersedesMandateId=x.SupersedesMandateId};
 }
 
+public sealed class EfMandateLimitChangeStore:IMandateLimitChangeStore
+{
+    private readonly AgentTrustDbContext _db;public EfMandateLimitChangeStore(AgentTrustDbContext db)=>_db=db;
+    public void Save(MandateLimitChangeProposal item){_db.Add(ToEntity(item));_db.SaveChanges();}
+    public MandateLimitChangeProposal? FindOwned(string id,string principal)=>Map(_db.MandateLimitChangeProposals.AsNoTracking().SingleOrDefault(x=>x.ProposalId==id&&x.PrincipalId==principal));
+    public bool TryApply(string id,string principal,DateTimeOffset now,out FinancialMandate? mandate,out IReadOnlyList<string> reasons)
+    {
+        using var tx=_db.Database.BeginTransaction(IsolationLevel.Serializable);var p=_db.MandateLimitChangeProposals.SingleOrDefault(x=>x.ProposalId==id&&x.PrincipalId==principal);
+        if(p is null){tx.Rollback();mandate=null;reasons=["PROPOSAL_NOT_FOUND"];return false;}if(p.Status!="AwaitingStepUp"){tx.Rollback();mandate=null;reasons=["PROPOSAL_NOT_PENDING"];return false;}
+        if(p.ExpiresAt<now){p.Status="Expired";p.Version++;_db.SaveChanges();tx.Commit();mandate=null;reasons=["PROPOSAL_EXPIRED"];return false;}
+        var current=_db.FinancialMandates.SingleOrDefault(x=>x.MandateId==p.MandateId&&x.Version==p.BaseMandateVersion&&x.PrincipalId==principal&&x.Status=="Active");
+        if(current is null||current.ExpiresAt<now){tx.Rollback();mandate=null;reasons=["MANDATE_CHANGED_OR_INACTIVE"];return false;}
+        current.Status="Superseded";current.ConcurrencyVersion++;var next=new FinancialMandateEntity{MandateId=current.MandateId,Version=current.Version+1,ConcurrencyVersion=1,PrincipalId=current.PrincipalId,AgentId=current.AgentId,Merchant=current.Merchant,Purpose=current.Purpose,PaymentMethodId=current.PaymentMethodId,PerTransactionLimit=p.PerTransactionLimit??current.PerTransactionLimit,DailyLimit=current.DailyLimit,WeeklyLimit=p.WeeklyLimit??current.WeeklyLimit,MonthlyLimit=p.MonthlyLimit??current.MonthlyLimit,Currency=current.Currency,TaskParametersJson=current.TaskParametersJson,AboveLimit=current.AboveLimit,Status="Active",SupersedesMandateId=current.MandateId,CreatedAt=now,EffectiveFrom=now,ExpiresAt=current.ExpiresAt};_db.Add(next);
+        p.Status="Applied";p.AppliedAt=now;p.AppliedBy=principal;p.Version++;
+        try{_db.SaveChanges();tx.Commit();mandate=MapMandate(next);reasons=[];return true;}catch(DbUpdateException){tx.Rollback();mandate=null;reasons=["CONCURRENT_MANDATE_CHANGE"];return false;}
+    }
+    private static MandateLimitChangeProposalEntity ToEntity(MandateLimitChangeProposal x)=>new(){ProposalId=x.ProposalId,MandateId=x.MandateId,BaseMandateVersion=x.BaseMandateVersion,PrincipalId=x.PrincipalId,PerTransactionLimit=x.PerTransactionLimit,WeeklyLimit=x.WeeklyLimit,MonthlyLimit=x.MonthlyLimit,Currency=x.Currency,Status=x.Status.ToString(),CreatedAt=x.CreatedAt,ExpiresAt=x.ExpiresAt,RequestedThrough=x.RequestedThrough,AppliedAt=x.AppliedAt,AppliedBy=x.AppliedBy,Version=x.Version};
+    private static MandateLimitChangeProposal? Map(MandateLimitChangeProposalEntity? x)=>x is null?null:new(x.ProposalId,x.MandateId,x.BaseMandateVersion,x.PrincipalId,x.PerTransactionLimit,x.WeeklyLimit,x.MonthlyLimit,x.Currency,Enum.Parse<MandateLimitChangeStatus>(x.Status),x.CreatedAt,x.ExpiresAt,x.RequestedThrough,x.AppliedAt,x.AppliedBy,x.Version);
+    private static FinancialMandate MapMandate(FinancialMandateEntity x)=>new(x.MandateId,x.PrincipalId,x.AgentId,x.Merchant,x.Purpose,x.PaymentMethodId,x.PerTransactionLimit,x.WeeklyLimit,x.MonthlyLimit,x.Currency,ConsumerStoreJson.Read<Dictionary<string,string>>(x.TaskParametersJson),Enum.Parse<AboveLimitAction>(x.AboveLimit),Enum.Parse<MandateStatus>(x.Status),x.CreatedAt,x.ExpiresAt){Version=x.Version,DailyLimit=x.DailyLimit,EffectiveFrom=x.EffectiveFrom,SupersedesMandateId=x.SupersedesMandateId};
+}
+
 public sealed class EfPaymentMethodStore : IPaymentMethodStore
 {
     private readonly AgentTrustDbContext _db; public EfPaymentMethodStore(AgentTrustDbContext db)=>_db=db;
     public void Save(PaymentMethod item){var x=_db.ConsumerPaymentMethods.SingleOrDefault(v=>v.PaymentMethodId==item.PaymentMethodId);if(x is null){x=new(){PaymentMethodId=item.PaymentMethodId,Version=1};_db.Add(x);}else x.Version++;
-        x.PrincipalId=item.PrincipalId;x.Provider=item.Provider;x.ProviderToken=item.Token;x.CardBrand=item.CardBrand;x.Last4=item.Last4;x.ExpiryMonth=item.ExpiryMonth;x.ExpiryYear=item.ExpiryYear;x.Status=item.Status.ToString();_db.SaveChanges();}
+        x.PrincipalId=item.PrincipalId;x.Provider=item.Provider;x.ProviderToken=item.Token;x.ProviderCustomerReference=item.ProviderCustomerReference;x.CardBrand=item.CardBrand;x.Last4=item.Last4;x.ExpiryMonth=item.ExpiryMonth;x.ExpiryYear=item.ExpiryYear;x.Status=item.Status.ToString();_db.SaveChanges();}
     public PaymentMethod? Find(string id)=>Map(_db.ConsumerPaymentMethods.AsNoTracking().SingleOrDefault(x=>x.PaymentMethodId==id));
     public PaymentMethod? FindByProviderToken(string provider,string token)=>Map(_db.ConsumerPaymentMethods.AsNoTracking().SingleOrDefault(x=>x.Provider==provider&&x.ProviderToken==token));
     public IReadOnlyList<PaymentMethod> FindByPrincipal(string id)=>_db.ConsumerPaymentMethods.AsNoTracking().Where(x=>x.PrincipalId==id).AsEnumerable().Select(Map).OfType<PaymentMethod>().ToList();
-    private static PaymentMethod? Map(ConsumerPaymentMethodEntity? x)=>x is null?null:new(x.PaymentMethodId,x.PrincipalId,x.Provider,x.ProviderToken,x.CardBrand,x.Last4,x.ExpiryMonth,x.ExpiryYear,Enum.Parse<PaymentMethodStatus>(x.Status));
+    private static PaymentMethod? Map(ConsumerPaymentMethodEntity? x)=>x is null?null:new(x.PaymentMethodId,x.PrincipalId,x.Provider,x.ProviderToken,x.CardBrand,x.Last4,x.ExpiryMonth,x.ExpiryYear,Enum.Parse<PaymentMethodStatus>(x.Status),x.ProviderCustomerReference);
 }
 
 public sealed class EfConsumerPlanningStore:IConsumerPlanningStore
@@ -192,6 +213,29 @@ public sealed class EfConsumerPlanningStore:IConsumerPlanningStore
         :new(principal,"AUTO_WHEN_SAFE",false,false,DateTimeOffset.UtcNow);
     public void SavePolicy(ConversationPolicy policy){var x=_db.ConsumerConversationPolicies.SingleOrDefault(v=>v.PrincipalId==policy.PrincipalId);if(x is null){x=new(){PrincipalId=policy.PrincipalId};_db.Add(x);}x.InteractionMode=policy.InteractionMode;x.AskBeforeSubstitutions=policy.AskBeforeSubstitutions;x.ShowBasketBeforePayment=policy.ShowBasketBeforePayment;x.UpdatedAt=policy.UpdatedAt;x.Version=policy.Version;_db.SaveChanges();}
     private static ConsumerPlanningConversation Map(ConsumerPlanningConversationEntity x)=>new(x.ConversationId,x.PrincipalId,x.Objective,x.Status,x.StateJson,x.CreatedAt,x.UpdatedAt,x.Version);
+}
+
+public sealed class EfConsumerMemoryStore:IConsumerMemoryStore
+{
+    private readonly AgentTrustDbContext _db;public EfConsumerMemoryStore(AgentTrustDbContext db)=>_db=db;
+    public void Save(ConsumerMemoryEntry item){var x=_db.ConsumerMemories.SingleOrDefault(v=>v.MemoryId==item.MemoryId);if(x is null){x=new(){MemoryId=item.MemoryId};_db.Add(x);}MapTo(item,x);Enqueue(item,"Upsert");_db.SaveChanges();}
+    public ConsumerMemoryEntry? FindOwned(string id,string principal)=>Map(_db.ConsumerMemories.AsNoTracking().SingleOrDefault(x=>x.MemoryId==id&&x.PrincipalId==principal));
+    public IReadOnlyList<ConsumerMemoryEntry> ActiveForPrincipal(string principal,DateTimeOffset now)=>_db.ConsumerMemories.AsNoTracking().Where(x=>x.PrincipalId==principal&&!x.Deleted&&(x.ExpiresAt==null||x.ExpiresAt>now)).AsEnumerable().Select(Map).OfType<ConsumerMemoryEntry>().ToList();
+    public void Delete(ConsumerMemoryEntry item){var x=_db.ConsumerMemories.Single(v=>v.MemoryId==item.MemoryId&&v.PrincipalId==item.PrincipalId);MapTo(item,x);Enqueue(item,"Delete");_db.SaveChanges();}
+    public void RecordRetrieval(ConsumerMemoryRetrievalAudit item){_db.Add(new ConsumerMemoryRetrievalAuditEntity{AuditId=item.AuditId,PrincipalId=item.PrincipalId,Query=item.Query,ReturnedMemoryIdsJson=System.Text.Json.JsonSerializer.Serialize(item.ReturnedMemoryIds),RetrievedAt=item.RetrievedAt});_db.SaveChanges();}
+    public IReadOnlyList<ConsumerMemoryRetrievalAudit> Retrievals(string principal)=>_db.ConsumerMemoryRetrievalAudits.AsNoTracking().Where(x=>x.PrincipalId==principal).OrderBy(x=>x.RetrievedAt).AsEnumerable().Select(x=>new ConsumerMemoryRetrievalAudit(x.AuditId,x.PrincipalId,x.Query,System.Text.Json.JsonSerializer.Deserialize<string[]>(x.ReturnedMemoryIdsJson)??[],x.RetrievedAt)).ToList();
+    private static ConsumerMemoryEntry? Map(ConsumerMemoryEntity? x)=>x is null?null:new(x.MemoryId,x.PrincipalId,Enum.Parse<ConsumerMemoryKind>(x.Kind),Enum.Parse<ConsumerMemoryPolarity>(x.Polarity),x.Subject,x.Content,x.Provenance,x.SourceConversationId,x.SourcePurchaseIntentId,x.Confidence,x.CreatedAt,x.UpdatedAt,x.ExpiresAt,x.Deleted,x.Version);
+    private static void MapTo(ConsumerMemoryEntry item,ConsumerMemoryEntity x){x.PrincipalId=item.PrincipalId;x.Kind=item.Kind.ToString();x.Polarity=item.Polarity.ToString();x.Subject=item.Subject;x.Content=item.Content;x.Provenance=item.Provenance;x.SourceConversationId=item.SourceConversationId;x.SourcePurchaseIntentId=item.SourcePurchaseIntentId;x.Confidence=item.Confidence;x.CreatedAt=item.CreatedAt;x.UpdatedAt=item.UpdatedAt;x.ExpiresAt=item.ExpiresAt;x.Deleted=item.Deleted;x.Version=item.Version;}
+    private void Enqueue(ConsumerMemoryEntry item,string operation)=>_db.Add(new ConsumerMemoryOutboxEntity{OutboxId=$"cmob_{Guid.NewGuid():N}",MemoryId=item.MemoryId,PrincipalId=item.PrincipalId,Operation=operation,Status="Pending",CreatedAt=DateTimeOffset.UtcNow,NextAttemptAt=DateTimeOffset.UtcNow,Version=1});
+}
+
+public sealed class EfConsumerMemoryOutboxStore:IConsumerMemoryOutboxStore
+{
+    private readonly AgentTrustDbContext _db;public EfConsumerMemoryOutboxStore(AgentTrustDbContext db)=>_db=db;
+    public IReadOnlyList<ConsumerMemoryOutboxItem> Pending(int maximum,DateTimeOffset now)=>_db.ConsumerMemoryOutbox.AsNoTracking().Where(x=>x.Status=="Pending"&&(x.NextAttemptAt==null||x.NextAttemptAt<=now)).OrderBy(x=>x.CreatedAt).Take(maximum).Select(x=>new ConsumerMemoryOutboxItem(x.OutboxId,x.MemoryId,x.PrincipalId,x.Operation,x.Status,x.Attempts,x.CreatedAt,x.ProcessedAt,x.LastError)).ToList();
+    public ConsumerMemoryEntry? FindMemory(string id)=>_db.ConsumerMemories.AsNoTracking().Where(x=>x.MemoryId==id).AsEnumerable().Select(x=>new ConsumerMemoryEntry(x.MemoryId,x.PrincipalId,Enum.Parse<ConsumerMemoryKind>(x.Kind),Enum.Parse<ConsumerMemoryPolarity>(x.Polarity),x.Subject,x.Content,x.Provenance,x.SourceConversationId,x.SourcePurchaseIntentId,x.Confidence,x.CreatedAt,x.UpdatedAt,x.ExpiresAt,x.Deleted,x.Version)).SingleOrDefault();
+    public void Complete(string id,DateTimeOffset now){var x=_db.ConsumerMemoryOutbox.Single(v=>v.OutboxId==id);x.Status="Completed";x.ProcessedAt=now;x.LastError=null;x.Version++;_db.SaveChanges();}
+    public void Fail(string id,string error,DateTimeOffset now){var x=_db.ConsumerMemoryOutbox.Single(v=>v.OutboxId==id);x.Attempts++;x.LastError=error.Length>2000?error[..2000]:error;x.NextAttemptAt=now.AddSeconds(Math.Min(300,Math.Pow(2,Math.Min(x.Attempts,8))));x.Version++;_db.SaveChanges();}
 }
 
 public sealed class EfMandateUsageTracker : IMandateUsageTracker

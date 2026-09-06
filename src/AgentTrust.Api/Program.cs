@@ -185,6 +185,7 @@ if (connectionString is not null)
     builder.Services.AddScoped<IConnectedServiceStore, EfConnectedServiceStore>();
     builder.Services.AddScoped<IPurchaseExecutionStore, EfPurchaseExecutionStore>();
     builder.Services.AddScoped<IMandateStore, EfMandateStore>();
+    builder.Services.AddScoped<IMandateLimitChangeStore,EfMandateLimitChangeStore>();
     builder.Services.AddScoped<IMandateUsageTracker, EfMandateUsageTracker>();
     builder.Services.AddScoped<IOneOffAuthorisationStore, EfOneOffAuthorisationStore>();
     builder.Services.AddScoped<IScheduledOccurrenceStore, EfScheduledOccurrenceStore>();
@@ -192,6 +193,8 @@ if (connectionString is not null)
     builder.Services.AddScoped<IPurchaseAuditSink, EfPurchaseAuditSink>();
     builder.Services.AddScoped<ICommerceDurability, EfCommerceDurability>();
     builder.Services.AddScoped<IConsumerPlanningStore,EfConsumerPlanningStore>();
+    builder.Services.AddScoped<IConsumerMemoryStore,EfConsumerMemoryStore>();
+    builder.Services.AddScoped<IConsumerMemoryService,ConsumerMemoryService>();
     builder.Services.AddHostedService<ConsumerPilotWorker>();
 }
 else
@@ -201,6 +204,7 @@ else
     builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
     builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
     builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();
+    builder.Services.AddSingleton<IMandateLimitChangeStore,InMemoryMandateLimitChangeStore>();
     builder.Services.AddSingleton<IMandateUsageTracker, InMemoryMandateUsageTracker>();
     builder.Services.AddSingleton<IOneOffAuthorisationStore, InMemoryOneOffAuthorisationStore>();
     builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
@@ -208,6 +212,8 @@ else
     builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
     builder.Services.AddSingleton<ICommerceDurability, InMemoryCommerceDurability>();
     builder.Services.AddSingleton<IConsumerPlanningStore,InMemoryConsumerPlanningStore>();
+    builder.Services.AddSingleton<IConsumerMemoryStore,InMemoryConsumerMemoryStore>();
+    builder.Services.AddSingleton<IConsumerMemoryService,ConsumerMemoryService>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),
@@ -232,7 +238,27 @@ builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
         new StripePaymentOptions(mode), sp.GetRequiredService<IPaymentMethodStore>());
 });
 builder.Services.AddScoped<DemoGroceryConnector>();
+builder.Services.AddScoped<ICommerceConnector>(services=>services.GetRequiredService<DemoGroceryConnector>());
+builder.Services.AddScoped<MerchantConnectorRegistry>();
+builder.Services.AddSingleton<IObjectiveExpansionCapability,GroceryMealObjectiveCapability>();
 builder.Services.AddScoped<IConsumerPurchaseRequestAgent,ConsumerPurchaseRequestAgent>();
+builder.Services.AddScoped<MandateLimitChangeService>();
+
+var consumerMemoryEnabled=builder.Configuration.GetValue("ConsumerMemory:Enabled",false);
+if(consumerMemoryEnabled)
+{
+    if(connectionString is null)throw new InvalidOperationException("Consumer semantic memory requires the SQL system of record.");
+    var qdrantUrl=builder.Configuration["ConsumerMemory:Qdrant:Url"]??throw new InvalidOperationException("ConsumerMemory:Qdrant:Url is required.");
+    var redisConnection=builder.Configuration["ConsumerMemory:Redis:ConnectionString"]??throw new InvalidOperationException("ConsumerMemory:Redis:ConnectionString is required.");
+    var embeddingModel=builder.Configuration["ConsumerMemory:Embedding:Model"]??"text-embedding-3-small";var embeddingDimensions=builder.Configuration.GetValue("ConsumerMemory:Embedding:Dimensions",1536);
+    var embeddingEndpoint=builder.Configuration["ConsumerMemory:Embedding:Endpoint"]??"https://api.openai.com/v1/";var embeddingKey=builder.Configuration["OpenAI:ApiKey"]??Environment.GetEnvironmentVariable("OPENAI_API_KEY")??throw new InvalidOperationException("OPENAI_API_KEY is required for consumer semantic memory.");
+    builder.Services.AddStackExchangeRedisCache(options=>options.Configuration=redisConnection);
+    builder.Services.AddHttpClient("consumer-memory-embeddings",client=>{client.BaseAddress=new Uri(embeddingEndpoint);client.Timeout=TimeSpan.FromSeconds(30);});
+    builder.Services.AddHttpClient<IConsumerMemoryVectorIndex,QdrantConsumerMemoryVectorIndex>(client=>{client.BaseAddress=new Uri(qdrantUrl.TrimEnd('/')+"/");client.Timeout=TimeSpan.FromSeconds(15);});
+    builder.Services.AddScoped<IConsumerMemoryEmbeddingService>(sp=>new ConsumerEmbeddingAdapter(new OpenAiTextEmbeddingService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("consumer-memory-embeddings"),embeddingKey,embeddingModel,embeddingDimensions)));
+    builder.Services.AddScoped<IConsumerMemoryCache,RedisConsumerMemoryCache>();builder.Services.AddScoped<IConsumerMemoryRetriever>(sp=>new SemanticConsumerMemoryRetriever(sp.GetRequiredService<IConsumerMemoryStore>(),sp.GetRequiredService<IConsumerMemoryEmbeddingService>(),sp.GetRequiredService<IConsumerMemoryVectorIndex>(),sp.GetRequiredService<IConsumerMemoryCache>(),TimeSpan.FromSeconds(Math.Clamp(builder.Configuration.GetValue("ConsumerMemory:Redis:CacheTtlSeconds",120),10,3600))));
+    builder.Services.AddScoped<IConsumerMemoryOutboxStore,EfConsumerMemoryOutboxStore>();builder.Services.AddHostedService<ConsumerMemoryIndexWorker>();
+}
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and
 // IProfileHistoryStore are registered above (EF-backed and scoped to the request's DbContext

@@ -28,13 +28,23 @@ public sealed class StripePaymentAdapter : IPlatformPaymentProcessor
     {
         var method = _methods.Find(intent.PaymentMethodReference) ?? throw new InvalidOperationException("Payment method not found.");
         if (method.PrincipalId != intent.PrincipalId) throw new UnauthorizedAccessException("Payment method belongs to another principal.");
+        if (string.IsNullOrWhiteSpace(method.ProviderCustomerReference))
+            return new(PlatformPaymentStatus.Failed, null, null, "PAYMENT_METHOD_REQUIRES_CUSTOMER_SETUP");
         var amount = checked((long)decimal.Round(intent.TotalAmount * 100, 0, MidpointRounding.AwayFromZero));
-        var payment = await _service.CreateAsync(new PaymentIntentCreateOptions
+        Stripe.PaymentIntent payment;
+        try
         {
-            Amount = amount, Currency = intent.Currency.ToLowerInvariant(), PaymentMethod = method.Token,
-            Confirm = true, OffSession = true,
-            Metadata = new Dictionary<string, string> { ["purchase_intent_id"] = intent.PurchaseIntentId, ["principal_id"] = intent.PrincipalId }
-        }, new RequestOptions { IdempotencyKey = intent.IdempotencyKey }, cancellationToken);
+            payment = await _service.CreateAsync(new PaymentIntentCreateOptions
+            {
+                Amount = amount, Currency = intent.Currency.ToLowerInvariant(), PaymentMethod = method.Token, Customer = method.ProviderCustomerReference,
+                Confirm = true, OffSession = true,
+                Metadata = new Dictionary<string, string> { ["purchase_intent_id"] = intent.PurchaseIntentId, ["principal_id"] = intent.PrincipalId }
+            }, new RequestOptions { IdempotencyKey = intent.IdempotencyKey }, cancellationToken);
+        }
+        catch(StripeException ex)
+        {
+            return new(PlatformPaymentStatus.Failed, null, null, ex.StripeError?.Code ?? "STRIPE_PAYMENT_FAILED");
+        }
         return payment.Status switch
         {
             "succeeded" => new(PlatformPaymentStatus.Succeeded, payment.Id, null, null),

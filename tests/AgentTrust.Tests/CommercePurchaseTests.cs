@@ -19,6 +19,15 @@ namespace AgentTrust.Tests;
 public sealed class CommercePurchaseTests
 {
     [Fact]
+    public async Task StripeAdapterRejectsLegacyUnattachedMethodBeforeNetworkCall()
+    {
+        var methods=new InMemoryPaymentMethodStore();methods.Save(new PaymentMethod("local-method","principal-1","Stripe","pm_consumed","Visa","4242",12,2035,PaymentMethodStatus.Active));
+        var adapter=new StripePaymentAdapter("sk_test_placeholder",new(StripePaymentMode.Test),methods);var now=DateTimeOffset.UtcNow;
+        var intent=new PurchaseIntent("purchase-1","principal-1","agent-1","mandate-1","task-1","merchant-1","Merchant","GBP",[],10m,2.5m,12.5m,"address",null,"local-method",now,now.AddMinutes(5),"payment-key-1");
+        var result=await adapter.ProcessAsync(intent);
+        Assert.Equal(PlatformPaymentStatus.Failed,result.Status);Assert.Equal("PAYMENT_METHOD_REQUIRES_CUSTOMER_SETUP",result.FailureReason);
+    }
+    [Fact]
     public async Task ConnectorResolvesDescriptionTagAndInternalIdToTheSameProduct()
     {
         var fixture=Build(maximum:70);
