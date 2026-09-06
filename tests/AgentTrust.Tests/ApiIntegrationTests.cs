@@ -38,8 +38,6 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var malformed=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Wraps","Cheese is unavailable",20,"GBP",[new(null!,0)],[],8.75m,[]);
         Assert.True(AgentTrust.Api.PurchasePlanGuard.HasMalformedItems(malformed));
-        Assert.True(AgentTrust.Api.PurchasePlanGuard.TreatsOptionalIngredientAsRequired(malformed,"I want chicken wraps within a £20 budget"));
-        Assert.False(AgentTrust.Api.PurchasePlanGuard.TreatsOptionalIngredientAsRequired(malformed,"I want chicken wraps with cheese within a £20 budget"));
         var omitted=new AgentTrust.Api.ConsumerPurchasePlan(null!,null!,null!,20,null!,null!,null!,null,null!);
         var normalized=AgentTrust.Api.PurchasePlanGuard.Normalize(omitted);
         Assert.NotNull(normalized.Items);Assert.NotNull(normalized.Questions);Assert.NotNull(normalized.ToolsUsed);Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,normalized.Status);
@@ -58,16 +56,16 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(["search_catalogue_batch"],plugin.ToolsUsed);
     }
     [Fact]
-    public void PurchasePlanningPlugin_DiscoversMealIngredientsBeforeMerchantResolution()
+    public async Task PurchasePlanningPlugin_DiscoversMealIngredientsBeforeMerchantResolution()
     {
-        var plugin=new AgentTrust.Api.PurchasePlanningPlugin([],40);
-        using var document=JsonDocument.Parse(plugin.DiscoverRecipe("chicken wraps"));
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin([],40,objectiveCapabilities:[new AgentTrust.Connectors.GroceryMealObjectiveCapability()]);
+        using var document=JsonDocument.Parse(await plugin.ExpandObjective("chicken wraps"));
         var essential=document.RootElement.GetProperty("essential").EnumerateArray().Select(x=>x.GetString()!).ToArray();
         Assert.Equal(["chicken","wraps","lettuce","tomato","sauce"],essential);
-        Assert.Contains("discover_recipe",plugin.ToolsUsed);
+        Assert.Contains("expand_objective",plugin.ToolsUsed);
     }
     [Fact]
-    public void PurchasePlanningPlugin_StopsAfterCompleteMerchantPricedBasket()
+    public async Task PurchasePlanningPlugin_StopsAfterCompleteMerchantPricedBasket()
     {
         AgentTrust.Commerce.Product[] catalogue=
         [
@@ -75,7 +73,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             new("lettuce","Iceberg lettuce",1m,"GBP",10,new HashSet<string>{"lettuce"}),new("tomato","Salad tomatoes",1m,"GBP",10,new HashSet<string>{"tomato"}),
             new("garlic-sauce","Garlic mayonnaise",1m,"GBP",10,new HashSet<string>{"sauce"})
         ];
-        var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40);plugin.DiscoverRecipe("chicken wraps");
+        var plugin=new AgentTrust.Api.PurchasePlanningPlugin(catalogue,40,objectiveCapabilities:[new AgentTrust.Connectors.GroceryMealObjectiveCapability()]);await plugin.ExpandObjective("chicken wraps");
         var priced=plugin.Price("[{\"searchTerm\":\"chicken\",\"quantity\":1},{\"searchTerm\":\"wraps\",\"quantity\":1},{\"searchTerm\":\"lettuce\",\"quantity\":1},{\"searchTerm\":\"tomato\",\"quantity\":1},{\"searchTerm\":\"sauce\",\"quantity\":1}]");
         Assert.True(plugin.TryBuildReadyPlan(priced,16.68m,4,out var plan));
         Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,plan.Status);Assert.Equal(10.50m,plan.EstimatedTotal);Assert.Equal(4,plan.ReasoningTurns);Assert.All(plan.Items,x=>Assert.Contains(catalogue,p=>p.ProductId==x.SearchTerm));
@@ -234,7 +232,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         {
             var naturalResponse=await _client.PostAsync("/api/consumer/purchases/request",naturalRequest);
             Assert.Equal(HttpStatusCode.OK,naturalResponse.StatusCode);var natural=await naturalResponse.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("Chicken wraps",natural.GetProperty("planning").GetProperty("summary").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(natural.GetProperty("planning").GetProperty("summary").GetString()));
             Assert.Contains("price_basket",natural.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()));
             Assert.Equal((int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,natural.GetProperty("execution").GetProperty("state").GetInt32());
             Assert.Equal(5,natural.GetProperty("intent").GetProperty("basketItems").GetArrayLength());

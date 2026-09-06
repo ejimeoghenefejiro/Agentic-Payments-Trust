@@ -241,6 +241,8 @@ builder.Services.AddScoped<DemoGroceryConnector>();
 builder.Services.AddScoped<ICommerceConnector>(services=>services.GetRequiredService<DemoGroceryConnector>());
 builder.Services.AddScoped<MerchantConnectorRegistry>();
 builder.Services.AddSingleton<IObjectiveExpansionCapability,GroceryMealObjectiveCapability>();
+builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
+builder.Services.AddScoped<IProviderPlanningCapability,GroceryProviderPlanningCapability>();
 builder.Services.AddScoped<IConsumerPurchaseRequestAgent,ConsumerPurchaseRequestAgent>();
 builder.Services.AddScoped<MandateLimitChangeService>();
 

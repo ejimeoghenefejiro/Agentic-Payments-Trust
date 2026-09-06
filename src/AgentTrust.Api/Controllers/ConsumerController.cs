@@ -137,7 +137,9 @@ public sealed class ConsumerController : ControllerBase
         }
         var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
         var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");var managedConversationId=startsNew?null:_planning.FindLatestOpen(principal,now.AddMinutes(-30))?.ConversationId;
-        var catalogue=await _connector.SearchProductsAsync("",token);ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(principal,managedConversationId,instruction,catalogue,token);}catch(UnauthorizedAccessException){return NotFound();}
+        var planningContext=new ConsumerActionPlanningContext(principal,managedConversationId,instruction,_connector.MerchantId,_connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(_connector));
+        ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(planningContext,token);}catch(UnauthorizedAccessException){return NotFound();}
         if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
         try
         {
@@ -148,6 +150,7 @@ public sealed class ConsumerController : ControllerBase
         }
         catch(KeyNotFoundException ex){return UnprocessableEntity(new{code="MERCHANT_ITEM_UNAVAILABLE",message=ex.Message,paymentAttempted=false,trustBoundaryInvoked=false});}
         catch(InvalidOperationException ex){return UnprocessableEntity(new{code="MERCHANT_QUOTE_UNAVAILABLE",message=ex.Message,paymentAttempted=false,trustBoundaryInvoked=false});}
+        var catalogue=await _connector.SearchProductsAsync("",token);
         if(!(await _authorization.AuthorizeAsync(User,"StepUp")).Succeeded)return Forbid();
         var holds=_planning.Reservations(plan.ConversationId!);if(holds.Count!=plan.Items.Count)return Conflict(new{code="PRODUCT_RESERVATION_INCOMPLETE"});
         foreach(var hold in holds){var current=await _connector.GetProductAsync(hold.ProductId,token);if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)return Conflict(new{code="PRODUCT_REVALIDATION_REQUIRED",productId=hold.ProductId});}

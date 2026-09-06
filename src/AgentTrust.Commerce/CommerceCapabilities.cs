@@ -13,6 +13,20 @@ public interface IDeliveryCapability { Task<IReadOnlyList<DeliveryOption>> GetDe
 public interface ICheckoutCapability { Task PrepareCheckoutAsync(PurchaseIntent intent, CancellationToken cancellationToken = default); Task<ConnectorPurchaseResult> ExecutePurchaseAsync(PurchaseIntent intent, PurchaseAuthorisation authorisation, CancellationToken cancellationToken = default); }
 public interface ICommerceConnector : IProductSearchCapability, IBasketCapability, IQuoteCapability, IDeliveryCapability, ICheckoutCapability { string MerchantId { get; } string MerchantName { get; } }
 
+public static class CommerceCapabilityCatalog
+{
+    public static IReadOnlySet<string> Describe(object provider)
+    {
+        var capabilities=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if(provider is IProductSearchCapability){capabilities.Add("search_products");capabilities.Add("get_product");}
+        if(provider is IBasketCapability){capabilities.Add("create_basket");capabilities.Add("update_basket");}
+        if(provider is IQuoteCapability)capabilities.Add("get_quote");
+        if(provider is IDeliveryCapability)capabilities.Add("get_delivery_options");
+        if(provider is ICheckoutCapability)capabilities.Add("execute_purchase");
+        return capabilities;
+    }
+}
+
 public sealed class MerchantConnectorRegistry
 {
     private readonly IReadOnlyDictionary<string,ICommerceConnector> _connectors;
@@ -24,6 +38,7 @@ public sealed class MerchantConnectorRegistry
         _connectors=materialized.ToDictionary(x=>x.MerchantId,StringComparer.OrdinalIgnoreCase);
     }
     public IReadOnlyList<ICommerceConnector> All=>_connectors.Values.ToArray();
+    public bool TryGet(string merchantId,out ICommerceConnector connector)=>_connectors.TryGetValue(merchantId,out connector!);
     public ICommerceConnector GetRequired(string merchantId)=>_connectors.TryGetValue(merchantId,out var connector)
         ?connector:throw new KeyNotFoundException($"Merchant connector '{merchantId}' is not registered.");
 }

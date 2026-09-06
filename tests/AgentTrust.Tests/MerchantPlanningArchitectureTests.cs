@@ -36,6 +36,23 @@ public sealed class MerchantPlanningArchitectureTests
         Assert.DoesNotContain(plannerDependencies.Concat(controllerDependencies),type=>forbidden.Contains(type));
         Assert.DoesNotContain(plannerDependencies,type=>typeof(ICheckoutCapability).IsAssignableFrom(type));
         Assert.DoesNotContain(plannerDependencies,type=>typeof(IPlatformPaymentProcessor).IsAssignableFrom(type));
+        var contractParameters=typeof(IConsumerPurchaseRequestAgent).GetMethod(nameof(IConsumerPurchaseRequestAgent.PlanAsync))!.GetParameters().Select(x=>x.ParameterType).ToArray();
+        Assert.DoesNotContain(contractParameters,type=>type==typeof(Product)||type==typeof(IReadOnlyList<Product>));
+    }
+
+    [Fact]
+    public async Task GenericAgent_DispatchesToRegisteredProviderCapabilityWithoutCatalogueKnowledge()
+    {
+        var hotel=new StubProviderCapability("hotel-x");
+        var agent=new ConsumerPurchaseRequestAgent([hotel]);
+        var context=new ConsumerActionPlanningContext("principal-1",null,"Book an accessible room","hotel-x","Hotel X",
+            new HashSet<string>(["search_rooms","get_quote"]));
+
+        var plan=await agent.PlanAsync(context,CancellationToken.None);
+
+        Assert.Equal("hotel-x",hotel.Received?.ProviderId);
+        Assert.Equal("Book an accessible room",plan.Summary);
+        Assert.Equal("EUR",plan.Currency);
     }
 
     [Fact]
@@ -49,4 +66,17 @@ public sealed class MerchantPlanningArchitectureTests
     private static DemoGroceryConnector Connector()=>new(
         new HmacPurchaseAuthorisationService(Enumerable.Range(1,32).Select(x=>(byte)x).ToArray()),
         new MockPlatformPaymentProcessor());
+
+    private sealed class StubProviderCapability(string providerId):IProviderPlanningCapability
+    {
+        public ConsumerActionPlanningContext? Received { get; private set; }
+        public string ProviderId=>providerId;
+        public IReadOnlySet<string> Capabilities { get; }=new HashSet<string>(["search_rooms","get_quote"]);
+        public bool CanHandle(ConsumerActionPlanningContext context)=>context.ProviderId==providerId;
+        public Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context,CancellationToken cancellationToken)
+        {
+            Received=context;
+            return Task.FromResult(new ConsumerPurchasePlan(PurchasePlanningStatus.Ready,context.Instruction,"Provider quote ready",100,"EUR",[],[],90,["get_quote"]));
+        }
+    }
 }

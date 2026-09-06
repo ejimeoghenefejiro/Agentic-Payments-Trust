@@ -85,10 +85,6 @@ public static class PurchasePlanGuard
         if(!match.Success)return(requested.Trim(),1);var counts=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase){{"a",1},{"an",1},{"one",1},{"two",2},{"three",3},{"four",4},{"five",5},{"six",6},{"seven",7},{"eight",8},{"nine",9},{"ten",10}};
         var value=match.Groups["count"].Value;var quantity=int.TryParse(value,out var numeric)?numeric:counts[value];return(match.Groups["product"].Value.Trim(),Math.Max(quantity,1));
     }
-    public static bool TreatsOptionalIngredientAsRequired(ConsumerPurchasePlan plan,string instruction)=>
-        plan.Status==PurchasePlanningStatus.Impossible&&instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)&&
-        plan.Message.Contains("cheese",StringComparison.OrdinalIgnoreCase)&&
-        !instruction.Contains("with cheese",StringComparison.OrdinalIgnoreCase)&&!instruction.Contains("cheesy",StringComparison.OrdinalIgnoreCase);
     public static bool HasContradictoryBudgetConclusion(ConsumerPurchasePlan plan,IReadOnlyList<Product> catalogue,IReadOnlyList<PurchasePlanningPlugin.ToolCall> evidence)
     {
         if(plan.Status==PurchasePlanningStatus.Ready||!plan.Message.Contains("exceed",StringComparison.OrdinalIgnoreCase)||!plan.Message.Contains("budget",StringComparison.OrdinalIgnoreCase)||
@@ -108,18 +104,16 @@ public static class PurchasePlanGuard
 }
 public sealed record ConsumerPlanningState(string Objective,Dictionary<string,string> Constraints,List<string> Hypotheses,List<string> OpenQuestions,
     List<string> AttemptedBaskets,List<string> RejectedAlternatives,List<string> ToolHistory,string Status,ConsumerPurchasePlan? LatestPlan);
-public interface IConsumerPurchaseRequestAgent{Task<ConsumerPurchasePlan> PlanAsync(string principalId,string? conversationId,string instruction,IReadOnlyList<Product> catalogue,CancellationToken token);}
-
 /// <summary>A bounded Semantic Kernel agent may search and price products, but is deliberately
 /// given no mandate, authorisation, checkout or payment function.</summary>
-public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
+public sealed class GroceryConsumerPurchasePlanner
 {
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true};
-    private readonly IConsumerPlanningStore _store;private readonly IConsumerMemoryService? _memory;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
+    private readonly IConsumerPlanningStore _store;private readonly IConsumerMemoryService? _memory;private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
     private const int DefaultMaximumToolCalls=40;private const int DefaultMaximumReasoningTurns=40;
-    public ConsumerPurchaseRequestAgent(IConsumerPlanningStore store,IConfiguration configuration,IConsumerMemoryService? memory=null)
+    public GroceryConsumerPurchasePlanner(IConsumerPlanningStore store,IConfiguration configuration,IConsumerMemoryService? memory=null,IEnumerable<IObjectiveExpansionCapability>? objectiveCapabilities=null)
     {
-        _store=store;_memory=memory;_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
+        _store=store;_memory=memory;_objectiveCapabilities=(objectiveCapabilities??[]).ToArray();_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
         _maximumToolCalls=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumToolCalls",DefaultMaximumToolCalls),8,80);
         _maximumReasoningTurns=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumReasoningTurns",DefaultMaximumReasoningTurns),8,40);
         _planningTimeoutSeconds=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:TimeoutSeconds",90),30,180);
@@ -144,14 +138,14 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
             catch(Exception ex) when(ex is not OperationCanceledException||!token.IsCancellationRequested){plan=null;}
         }
         var completeInstruction=string.Join("\n",new[]{state.Objective,instruction});
-        plan??=_allowDeterministicFallback||IsSupportedMeal(completeInstruction)?Fallback(completeInstruction,catalogue):Unavailable(instruction);
+        plan??=_allowDeterministicFallback||SupportsObjective(completeInstruction)?await Fallback(completeInstruction,catalogue,token):Unavailable(instruction);
         plan=PurchasePlanGuard.Normalize(plan);
         if(PurchasePlanGuard.TryReplaceUnsupportedDeliveryConclusion(completeInstruction,catalogue,plan,out var deliveryCorrectedPlan))
             plan=deliveryCorrectedPlan;
         if(PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion(completeInstruction,catalogue,plan,out var affordabilityCorrectedPlan))
             plan=affordabilityCorrectedPlan;
-        if(plan.Status==PurchasePlanningStatus.Impossible&&IsSupportedMeal(completeInstruction)&&!HasGroundedImpossibilityEvidence(PurchasePlanningPlugin.LastCalls))
-            plan=Fallback(completeInstruction,catalogue);
+        if(plan.Status==PurchasePlanningStatus.Impossible&&SupportsObjective(completeInstruction)&&!HasGroundedImpossibilityEvidence(PurchasePlanningPlugin.LastCalls))
+            plan=await Fallback(completeInstruction,catalogue,token);
         if(plan.Status==PurchasePlanningStatus.Ready&&TryCanonicalizePricedBasket(plan,PurchasePlanningPlugin.LastCalls,out var canonicalPlan))
             plan=canonicalPlan;
         if(plan.Status==PurchasePlanningStatus.Ready&&PurchasePlanGuard.HasUnavailableItems(plan,catalogue))
@@ -191,26 +185,25 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
 
     private async Task<ConsumerPurchasePlan?> AskModel(ConsumerPlanningState state,string instruction,IReadOnlyList<Product> catalogue,CancellationToken token)
     {
-        var kernel=AgentFactory.CreateLiveKernel();var tools=new PurchasePlanningPlugin(catalogue,_maximumToolCalls,state.Constraints);kernel.Plugins.AddFromObject(tools,"grocery");
+        var kernel=AgentFactory.CreateLiveKernel();var tools=new PurchasePlanningPlugin(catalogue,_maximumToolCalls,state.Constraints,_objectiveCapabilities);kernel.Plugins.AddFromObject(tools,"commerce");
         var chat=kernel.GetRequiredService<IChatCompletionService>();var history=new ChatHistory();
         history.AddSystemMessage("""
-            You are an iterative grocery-planning agent. You have NO authority or payment tools.
-            Extract the user's exact maximum budget. When the user names a meal instead of listing ingredients,
-            call RECIPE first to derive its essential and optional ingredients. Then search the catalogue,
+            You are a bounded consumer-action planning agent. You have NO authority, checkout or payment tools.
+            Understand the user's objective and constraints. Inspect and use only the capabilities supplied by the provider.
+            When an objective requires domain expansion, call EXPAND_OBJECTIVE only when that optional capability is available. Then search the provider,
             price the complete basket including delivery, try cheaper alternatives when necessary,
             and challenge the result before stopping. Minimise latency and conversation burden: normally
             use one SEARCH_MANY turn for all essential ingredients, one PRICE turn, then FINAL. Compare
             matching brands and choose the cheapest valid available product unless a stored preference,
-            allergy, dietary rule or requested brand prevents it. Use search_catalogue_batch and price_basket; do not
-            invent products or prices. Build the minimum viable recipe requested by the user. Separate
-            essential ingredients from optional enhancements. Omit unavailable optional ingredients
-            and continue; for chicken wraps, cheese is optional unless explicitly requested. If information about ingredients already owned could make
+            hard constraint prevents it. Use the provider's search and quote capabilities; do not invent products, services, prices,
+            availability, fees, currencies or policies. Separate required concepts from optional enhancements. Omit unavailable optional concepts
+            and continue. If information about items already owned could make
             the request feasible, return NEEDS_INPUT with at most one short, plain-language question.
             Minimise cognitive load for assistive-technology users and never require them to repeat known context. If no complete basket
             is possible, stop. On each reasoning turn return exactly one JSON action:
             {"action":"SEARCH","query":"ingredient"}
             {"action":"SEARCH_MANY","queries":["ingredient one","ingredient two","ingredient three"]}
-            {"action":"RECIPE","meal":"meal or dish described by the user"}
+            {"action":"EXPAND_OBJECTIVE","objective":"objective described by the user"}
             {"action":"PRICE","items":[{"searchTerm":"catalogue term","quantity":1}]}
             {"action":"FINAL","plan":{"status":"READY|NEEDS_INPUT|IMPOSSIBLE_WITHIN_BUDGET","summary":"...","message":"...","maximumAmount":4.99,"currency":"GBP","items":[],"questions":[],"estimatedTotal":4.50,"toolsUsed":[],"hasSubstitutions":false}}
             READY is allowed only after PRICE evidence proves the complete basket is within budget.
@@ -222,13 +215,13 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
         {
             var response=await chat.GetChatMessageContentAsync(history,kernel:kernel,cancellationToken:token);var text=response.Content??"";var start=text.IndexOf('{');var end=text.LastIndexOf('}');if(start<0||end<=start)return null;var json=text[start..(end+1)];
             using var document=JsonDocument.Parse(json);var root=document.RootElement;var action=root.GetProperty("action").GetString()?.ToUpperInvariant();history.AddAssistantMessage(json);
-            if(action is "SEARCH" or "SEARCH_MANY" or "RECIPE" or "PRICE")
+            if(action is "SEARCH" or "SEARCH_MANY" or "EXPAND_OBJECTIVE" or "PRICE")
             {
                 var signature=$"{action}:{root.GetRawText()}";if(!completedCalls.Add(signature)){duplicateCalls++;history.AddUserMessage("APPLICATION VALIDATION: This identical tool call already completed. Use its existing evidence, choose a different investigation, or finish.");if(duplicateCalls>=3)return null;continue;}
             }
             if(action=="SEARCH"){var query=root.GetProperty("query").GetString()??"";history.AddUserMessage($"TOOL search_catalogue RESULT: {tools.Search(query)}");continue;}
             if(action=="SEARCH_MANY"){var queries=root.GetProperty("queries").GetRawText();history.AddUserMessage($"TOOL search_catalogue_batch RESULT: {tools.SearchMany(queries)}");continue;}
-            if(action=="RECIPE"){var meal=root.GetProperty("meal").GetString()??state.Objective;history.AddUserMessage($"TOOL discover_recipe RESULT: {tools.DiscoverRecipe(meal)}");continue;}
+            if(action=="EXPAND_OBJECTIVE"){var objective=root.GetProperty("objective").GetString()??state.Objective;history.AddUserMessage($"TOOL expand_objective RESULT: {await tools.ExpandObjective(objective,token)}");continue;}
             if(action=="PRICE")
             {
                 var items=root.GetProperty("items").GetRawText();var priced=tools.Price(items);history.AddUserMessage($"TOOL price_basket RESULT: {priced}");
@@ -242,7 +235,6 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
                 if(plan is null){history.AddUserMessage("APPLICATION VALIDATION: The final plan was unreadable. Correct it and continue.");continue;}
                 plan=PurchasePlanGuard.Normalize(plan);
                 if(PurchasePlanGuard.HasMalformedItems(plan)){history.AddUserMessage("APPLICATION VALIDATION: Every item must have a non-empty searchTerm and a positive quantity. Correct the basket and continue.");continue;}
-                if(PurchasePlanGuard.TreatsOptionalIngredientAsRequired(plan,instruction)){history.AddUserMessage("APPLICATION VALIDATION: Cheese is optional for chicken wraps and was not requested. Omit it, search and price the minimum viable basket, then continue.");continue;}
                 if(plan.Status==PurchasePlanningStatus.Impossible&&!HasGroundedImpossibilityEvidence(PurchasePlanningPlugin.LastCalls)){history.AddUserMessage("APPLICATION VALIDATION: IMPOSSIBLE requires catalogue-search and price evidence. Discover the recipe, resolve essential ingredients against the catalogue, price the cheapest complete basket, and continue.");continue;}
                 return plan with{ToolsUsed=tools.ToolsUsed.ToArray(),ReasoningTurns=turn};
             }
@@ -290,24 +282,25 @@ public sealed class ConsumerPurchaseRequestAgent:IConsumerPurchaseRequestAgent
         return null;
     }
 
-    private static ConsumerPurchasePlan Fallback(string instruction,IReadOnlyList<Product> catalogue)
+    private async Task<ConsumerPurchasePlan> Fallback(string instruction,IReadOnlyList<Product> catalogue,CancellationToken token)
     {
         if(PurchasePlanGuard.TryBuildExplicitProductListPlan(instruction,catalogue,out var listedPurchase))return listedPurchase;
         if(PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out var directPurchase))return directPurchase;
         var match=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var budget=match.Success?decimal.Parse(match.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture):0;
-        if(!instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)||budget<=0)
+        var capability=_objectiveCapabilities.FirstOrDefault(x=>x.CanExpand(instruction));var expansion=capability is null?null:await capability.ExpandAsync(instruction,token);
+        if(expansion is null||budget<=0)
             return new(PurchasePlanningStatus.NeedsInput,"Planning requires clarification","The live planning model is unavailable and no safe verified plan was produced.",Math.Max(budget,0.01m),"GBP",[],["Please restate the meal and maximum budget."],null,[]);
-        var terms=new[]{"chicken","wraps","lettuce","tomato","sauce"};var inventory=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:already have|I have)\s+([a-z ,and]+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups[1].Value;var needed=terms.Where(x=>!inventory.Contains(x,StringComparison.OrdinalIgnoreCase)).ToArray();var items=needed.Select(x=>new PlannedPurchaseItem(x,1)).ToArray();var tools=new PurchasePlanningPlugin(catalogue,DefaultMaximumToolCalls);tools.SearchMany(JsonSerializer.Serialize(needed));var priced=tools.Price(JsonSerializer.Serialize(items));var total=JsonDocument.Parse(priced).RootElement.GetProperty("total").GetDecimal();
+        var inventory=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:already have|I have)\s+([a-z ,and]+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups[1].Value;var needed=expansion.RequiredConcepts.Where(x=>!inventory.Contains(x,StringComparison.OrdinalIgnoreCase)).ToArray();var items=needed.Select(x=>new PlannedPurchaseItem(x,1)).ToArray();var tools=new PurchasePlanningPlugin(catalogue,DefaultMaximumToolCalls);tools.SearchMany(JsonSerializer.Serialize(needed));var priced=tools.Price(JsonSerializer.Serialize(items));var total=JsonDocument.Parse(priced).RootElement.GetProperty("total").GetDecimal();
         return total<=budget
-            ?new(PurchasePlanningStatus.Ready,"Chicken wraps",$"A complete basket is available for £{total:0.00}.",budget,"GBP",items,[],total,["search_catalogue_batch","price_basket"])
-            :new(PurchasePlanningStatus.NeedsInput,"Chicken wraps exceed budget",$"The cheapest complete basket is £{total:0.00}, above the £{budget:0.00} budget. No payment will be attempted.",budget,"GBP",items,
-                ["Do you already have any of the sauce, lettuce or tomatoes?","Would you accept a cheaper vegetarian filling or increase the budget?"],total,["search_catalogue_batch","price_basket"]);
+            ?new(PurchasePlanningStatus.Ready,expansion.Objective,$"A complete basket is available for £{total:0.00}.",budget,"GBP",items,[],total,["search_catalogue_batch","price_basket"])
+            :new(PurchasePlanningStatus.NeedsInput,$"{expansion.Objective} exceeds budget",$"The cheapest complete basket is £{total:0.00}, above the £{budget:0.00} budget. No payment will be attempted.",budget,"GBP",items,
+                ["Would you like to remove items already owned, accept alternatives, or increase the budget?"],total,["search_catalogue_batch","price_basket"]);
     }
     private static ConsumerPurchasePlan Unavailable(string instruction)
     {return new(PurchasePlanningStatus.NeedsInput,"Planning temporarily unavailable","The reasoning model did not complete safely. No deterministic substitute will submit a purchase.",ExtractBudget(instruction),"GBP",[],["Please retry when the planning service is available."],null,[]);}
     private static decimal ExtractBudget(string instruction){var match=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);return match.Success?decimal.Parse(match.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture):0.01m;}
-    private static bool IsSupportedMeal(string instruction)=>instruction.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase);
+    private bool SupportsObjective(string instruction)=>_objectiveCapabilities.Any(x=>x.CanExpand(instruction));
     private static bool HasGroundedImpossibilityEvidence(IReadOnlyList<PurchasePlanningPlugin.ToolCall> calls)=>
         calls.Any(x=>x.Name is "search_catalogue" or "search_catalogue_batch")&&calls.Any(x=>x.Name=="price_basket");
     private static bool TryCanonicalizePricedBasket(ConsumerPurchasePlan plan,IReadOnlyList<PurchasePlanningPlugin.ToolCall> calls,out ConsumerPurchasePlan canonical)
@@ -332,8 +325,8 @@ public sealed class PurchasePlanningPlugin
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true,PropertyNamingPolicy=JsonNamingPolicy.CamelCase};
     public sealed record ToolCall(string Name,string Input,string Output);private static readonly AsyncLocal<List<ToolCall>?> Calls=new();public static IReadOnlyList<ToolCall> LastCalls=>Calls.Value??[];
     public static void ClearCalls()=>Calls.Value=[];
-    private readonly IReadOnlyList<Product> _catalogue;private readonly IReadOnlyDictionary<string,string> _constraints;private readonly List<string> _used=[];private readonly int _maximumCalls;private int _calls;private string[] _requiredIngredients=[];public IReadOnlyList<string> ToolsUsed=>_used;
-    public PurchasePlanningPlugin(IReadOnlyList<Product> catalogue,int maximumCalls=12,IReadOnlyDictionary<string,string>? constraints=null){_catalogue=catalogue;_maximumCalls=maximumCalls;_constraints=constraints??new Dictionary<string,string>();Calls.Value=[];}
+    private readonly IReadOnlyList<Product> _catalogue;private readonly IReadOnlyDictionary<string,string> _constraints;private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly List<string> _used=[];private readonly int _maximumCalls;private int _calls;private string[] _requiredIngredients=[];public IReadOnlyList<string> ToolsUsed=>_used;
+    public PurchasePlanningPlugin(IReadOnlyList<Product> catalogue,int maximumCalls=12,IReadOnlyDictionary<string,string>? constraints=null,IEnumerable<IObjectiveExpansionCapability>? objectiveCapabilities=null){_catalogue=catalogue;_maximumCalls=maximumCalls;_constraints=constraints??new Dictionary<string,string>();_objectiveCapabilities=(objectiveCapabilities??[]).ToArray();Calls.Value=[];}
     [KernelFunction("get_user_constraints"),Description("Read durable inventory-at-home, serving count, allergy, nutrition, diet and accepted-substitution constraints.")]
     public string Constraints()
     {
@@ -341,14 +334,15 @@ public sealed class PurchasePlanningPlugin
         Track("get_user_constraints","{}",output);
         return output;
     }
-    [KernelFunction("discover_recipe"),Description("Turn a meal request into essential and optional ingredient search terms before catalogue lookup. This proposes ingredients only; merchant tools must confirm products and prices.")]
-    public string DiscoverRecipe([Description("Meal or dish requested by the user")]string meal)
+    [KernelFunction("expand_objective"),Description("Use a registered domain capability to expand an objective into required and optional concepts before provider lookup.")]
+    public async Task<string> ExpandObjective([Description("Provider-domain objective to expand into required and optional concepts")]string objective,CancellationToken cancellationToken=default)
     {
-        _requiredIngredients=meal.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)?["chicken","wraps","lettuce","tomato","sauce"]:[];
-        object recipe=_requiredIngredients.Length>0
-            ?new{meal="chicken wraps",essential=_requiredIngredients,optional=new[]{"cheese","onion","pepper"},note="Adjust quantities for the requested serving count."}
-            :new{meal,essential=Array.Empty<string>(),optional=Array.Empty<string>(),note="No verified template is available. Propose a recipe, then verify every ingredient through the merchant catalogue."};
-        var output=JsonSerializer.Serialize(recipe,JsonOptions);Track("discover_recipe",meal,output);return output;
+        var capability=_objectiveCapabilities.FirstOrDefault(x=>x.CanExpand(objective));var expansion=capability is null?null:await capability.ExpandAsync(objective,cancellationToken);
+        _requiredIngredients=expansion?.RequiredConcepts.ToArray()??[];
+        object recipe=expansion is not null
+            ?new{objective=expansion.Objective,essential=expansion.RequiredConcepts,optional=expansion.OptionalConcepts,expansion.Provenance}
+            :new{objective,essential=Array.Empty<string>(),optional=Array.Empty<string>(),provenance="none"};
+        var output=JsonSerializer.Serialize(recipe,JsonOptions);Track("expand_objective",objective,output);return output;
     }
     public bool TryBuildReadyPlan(string pricedJson,decimal budget,int reasoningTurn,out ConsumerPurchasePlan plan)
     {
