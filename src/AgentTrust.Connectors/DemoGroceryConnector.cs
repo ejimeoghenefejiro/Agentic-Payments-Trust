@@ -9,7 +9,7 @@ namespace AgentTrust.Connectors;
 
 /// <summary>Controlled first-party grocery provider. It has no agent/LLM dependency and refuses
 /// checkout unless the exact intent carries a valid trusted authorisation.</summary>
-public sealed class DemoGroceryConnector : ICommerceConnector
+public sealed class DemoGroceryConnector : ICommerceConnector, IFulfilmentOptionsCapability, IFulfilmentQuoteCapability
 {
     private readonly object _gate = new(); private readonly IPurchaseAuthorisationService _authorisations;
     private readonly IPlatformPaymentProcessor _payments;
@@ -44,6 +44,10 @@ public sealed class DemoGroceryConnector : ICommerceConnector
         new("express", "Express delivery", 5m, now.AddHours(2), now.AddHours(3))]); }
     public Task SelectDeliveryOptionAsync(string basketId, string deliveryOptionId, CancellationToken cancellationToken = default)
     { if (deliveryOptionId is not ("standard" or "express")) throw new ArgumentException("Unknown delivery option."); lock (_gate) RequireBasket(basketId).DeliveryOptionId = deliveryOptionId; return Task.CompletedTask; }
+    public Task<IReadOnlyList<FulfilmentOption>> GetFulfilmentOptionsAsync(string orderIntentId, CancellationToken ct = default)
+    { var now = DateTimeOffset.UtcNow; return Task.FromResult<IReadOnlyList<FulfilmentOption>>([new("grocery-merchant-delivery", MerchantId, FulfilmentMode.MerchantDelivery, "Grocery delivery", true, "GBP", 2.50m, EstimatedDeliveryAt: now.AddDays(1)), new("grocery-pickup", MerchantId, FulfilmentMode.CustomerPickup, "Store pickup", true, "GBP", 0m, EstimatedReadyAt: now.AddHours(2), ProviderReference: "store-main"), new("grocery-courier", "courier-demo", FulfilmentMode.ThirdPartyDelivery, "Courier delivery", true, "GBP", 4.50m, EstimatedDeliveryAt: now.AddMinutes(45))]); }
+    public Task<FulfilmentQuote> GetFulfilmentQuoteAsync(FulfilmentQuoteRequest request, CancellationToken ct = default)
+    { if (request.ProviderId != MerchantId || request.Mode == FulfilmentMode.ThirdPartyDelivery) throw new InvalidOperationException("Use the selected courier provider for third-party delivery quotes."); var fee = request.Mode == FulfilmentMode.MerchantDelivery ? 2.50m : 0m; return Task.FromResult(new FulfilmentQuote($"grocery_fulfilment_quote_{Guid.NewGuid():N}", MerchantId, request.Mode, "GBP", fee, 0, 0, 0, fee, null, request.Mode == FulfilmentMode.MerchantDelivery ? DateTimeOffset.UtcNow.AddDays(1) : null, DateTimeOffset.UtcNow.AddMinutes(5), $"grocery_fulfilment_ref_{Guid.NewGuid():N}")); }
     public async Task<CommerceQuote> GetQuoteAsync(string basketId, string deliveryOptionId, CancellationToken cancellationToken = default)
     { var basket = await GetBasketAsync(basketId, cancellationToken); var options = await GetDeliveryOptionsAsync(basketId, cancellationToken); var delivery = options.Single(x => x.DeliveryOptionId == deliveryOptionId); var subtotal = basket.Items.Sum(x => x.TotalPrice); return new CommerceQuote($"quote_{Guid.NewGuid():N}", basketId, MerchantId, MerchantName, "GBP", basket.Items, subtotal, delivery.Fee, subtotal + delivery.Fee, deliveryOptionId, DateTimeOffset.UtcNow.AddMinutes(10)); }
     public Task PrepareCheckoutAsync(PurchaseIntent intent, CancellationToken cancellationToken = default)

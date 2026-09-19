@@ -47,21 +47,21 @@ public class SchedulingTests
         var authorities = new InMemoryDelegatedAuthorityStore();
         var ledger = new InMemoryTransactionLedger();
         var framework = new TrustFramework(agents, bindings, authorities, ledger, new MockPaymentAdapter());
-        agents.Register(new AgentIdentity("mobility_agent_01", "user_103", "consumer", "production",
+        agents.Register(new AgentIdentity("service_agent_01", "user_103", "consumer", "production",
             CredentialStatus.Active, DateTimeOffset.Parse("2027-01-01T00:00:00Z"), DateTimeOffset.Parse("2027-12-31T00:00:00Z"), "ca"));
-        bindings.Bind(new PrincipalBinding("mobility_agent_01", "user_103", DateTimeOffset.UtcNow, true, "kyc"));
+        bindings.Bind(new PrincipalBinding("service_agent_01", "user_103", DateTimeOffset.UtcNow, true, "kyc"));
 
         var mandates = new InMemoryMandateStore();
         mandates.Save(new FinancialMandate(
-            "mandate_8821", "user_103", "mobility_agent_01", "Uber", "transport", "pm_1",
+            "mandate_8821", "user_103", "service_agent_01", "LocalServices", "cleaning", "pm_1",
             25m, 25m, null, "GBP",
-            new Dictionary<string, string> { ["pickup"] = "Location A", ["destination"] = "Location B", ["recipient"] = "girlfriend" },
+            new Dictionary<string, string> { ["location"] = "saved-home", ["duration"] = "2h" },
             AboveLimitAction.RequireApproval, MandateStatus.Active,
             DateTimeOffset.Parse("2027-01-01T00:00:00Z"), DateTimeOffset.Parse("2027-12-31T00:00:00Z")));
 
         var tasks = new InMemoryTaskStore();
-        var dueTask = new AgentTask("task_due", "mobility_agent_01", "user_103", "mandate_8821", "recurring_ride",
-            new Dictionary<string, string> { ["pickup"] = "Location A", ["destination"] = "Location B", ["recipient"] = "girlfriend" },
+        var dueTask = new AgentTask("task_due", "service_agent_01", "user_103", "mandate_8821", "recurring_cleaning",
+            new Dictionary<string, string> { ["location"] = "saved-home", ["duration"] = "2h" },
             AgentTaskStatus.Active, DateTimeOffset.Parse("2027-01-01T00:00:00Z"));
         var notDueTask = dueTask with { TaskId = "task_not_due" };
         tasks.Save(dueTask);
@@ -76,7 +76,7 @@ public class SchedulingTests
         var runner = new ScheduledTaskRunner(tasks, schedules, mandates, orchestrator, quoteProvider);
 
         var monday730 = new DateTimeOffset(2027, 6, 7, 7, 30, 0, TimeSpan.Zero);
-        var results = runner.RunDueTasks("mobility_agent_01", monday730);
+        var results = runner.RunDueTasks("service_agent_01", monday730);
 
         Assert.Single(results);
         Assert.Equal("task_due", results[0].TaskId);

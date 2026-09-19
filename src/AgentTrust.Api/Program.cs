@@ -26,6 +26,7 @@ using AgentTrust.Api;
 using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.DataProtection;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsEnvironment("Testing")) { builder.Logging.ClearProviders(); builder.Logging.AddConsole(); }
@@ -38,6 +39,16 @@ if (!string.IsNullOrWhiteSpace(dataProtectionCertificate)) { using var certifica
 else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("DATA_PROTECTION_CERTIFICATE_THUMBPRINT is required outside Development/Testing.");
 
 builder.Services.AddControllers(options => options.InputFormatters.Insert(0, new TextPlainInputFormatter()));
+builder.Services.AddProblemDetails();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.User.FindFirst("agenttrust_principal_id")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+var healthChecks = builder.Services.AddHealthChecks();
 builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -133,6 +144,7 @@ var connectionString = sqlServerConnectionString ?? postgresConnectionString;
 
 if (!string.IsNullOrWhiteSpace(sqlServerConnectionString) || !string.IsNullOrWhiteSpace(postgresConnectionString))
 {
+    healthChecks.AddCheck<DatabaseHealthCheck>("database", tags: ["ready"]);
     // MigrationsAssembly points at the provider-specific migrations project (see
     // AgentTrust.Data.Migrations.SqlServer / .Postgres) — migrations bake in provider-specific
     // SQL at generation time, so SQL Server's and Postgres's migrations for the same
@@ -219,7 +231,6 @@ if (connectionString is not null)
     builder.Services.AddScoped<IConsumerPlanningStore, EfConsumerPlanningStore>();
     builder.Services.AddScoped<IConsumerMemoryStore, EfConsumerMemoryStore>();
     builder.Services.AddScoped<IConsumerMemoryService, ConsumerMemoryService>();
-    builder.Services.AddScoped<IHotelBookingStore, EfHotelBookingStore>();
     builder.Services.AddHostedService<ConsumerPilotWorker>();
 }
 else
@@ -239,7 +250,6 @@ else
     builder.Services.AddSingleton<IConsumerPlanningStore, InMemoryConsumerPlanningStore>();
     builder.Services.AddSingleton<IConsumerMemoryStore, InMemoryConsumerMemoryStore>();
     builder.Services.AddSingleton<IConsumerMemoryService, ConsumerMemoryService>();
-    builder.Services.AddSingleton<IHotelBookingStore, InMemoryHotelBookingStore>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),
@@ -278,15 +288,30 @@ builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
     if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("SERVICE_ACTION_AUTHORISATION_KEY is required outside Development/Testing.");
     return new HmacServiceActionAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 });
-builder.Services.AddScoped<IServiceConnector, DemoHotelConnector>();
 builder.Services.AddScoped<IServiceConnector, DemoRestaurantConnector>();
-builder.Services.AddScoped<IServiceConnector, DemoTaxiConnector>();
+builder.Services.AddScoped<IServiceConnector, DemoHomeServiceConnector>();
+builder.Services.AddSingleton<IExternalExecutionControl, ConfigurationExternalExecutionControl>();
+if (connectionString is not null)
+{
+    builder.Services.AddScoped<IFulfilmentStore, EfFulfilmentStore>();
+    builder.Services.AddScoped<IFulfilmentWebhookHandler>(services =>
+        (EfFulfilmentStore)services.GetRequiredService<IFulfilmentStore>());
+    builder.Services.AddHostedService<FulfilmentReconciliationWorker>();
+}
+else
+{
+    builder.Services.AddSingleton<IFulfilmentStore, InMemoryFulfilmentStore>();
+    builder.Services.AddSingleton<IFulfilmentWebhookHandler>(services =>
+        (InMemoryFulfilmentStore)services.GetRequiredService<IFulfilmentStore>());
+}
+builder.Services.AddScoped<DemoThirdPartyDeliveryConnector>();
+builder.Services.AddScoped<IThirdPartyDeliveryConnector>(services => services.GetRequiredService<DemoThirdPartyDeliveryConnector>());
+builder.Services.AddScoped<IFulfilmentReconciliationService>(services => services.GetRequiredService<DemoThirdPartyDeliveryConnector>());
+builder.Services.AddScoped<IServiceConnector>(services => services.GetRequiredService<DemoThirdPartyDeliveryConnector>());
 builder.Services.AddScoped<ServiceConnectorRegistry>();
-builder.Services.AddScoped<IServiceDomainCapability, HotelDomainCapability>();
 builder.Services.AddScoped<IServiceDomainCapability, RestaurantDomainCapability>();
-builder.Services.AddScoped<IServiceDomainCapability, TaxiDomainCapability>();
+builder.Services.AddScoped<IServiceDomainCapability, HomeServiceDomainCapability>();
 builder.Services.AddScoped<ServicePlanningRouter>();
-builder.Services.AddHostedService<HotelBookingRecoveryWorker>();
 builder.Services.AddScoped<MandateLimitChangeService>();
 
 var consumerMemoryEnabled = builder.Configuration.GetValue("ConsumerMemory:Enabled", false);
@@ -388,6 +413,22 @@ if (!string.IsNullOrWhiteSpace(connectionString))
     scope.ServiceProvider.GetRequiredService<AgentTrustDbContext>().Database.Migrate();
 }
 
+app.UseExceptionHandler(handler => handler.Run(async context =>
+{
+    var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+    var (status, code, title) = exception switch
+    {
+        KeyNotFoundException => (StatusCodes.Status404NotFound, "RESOURCE_NOT_FOUND", "Resource not found"),
+        InvalidOperationException e when e.Message.StartsWith("QUOTE_EXPIRED", StringComparison.Ordinal) => (StatusCodes.Status409Conflict, "QUOTE_EXPIRED", "Quote expired"),
+        InvalidOperationException e when e.Message.StartsWith("IDEMPOTENCY_CONFLICT", StringComparison.Ordinal) => (StatusCodes.Status409Conflict, "DUPLICATE_REQUEST", "The idempotency key belongs to a different request"),
+        InvalidOperationException e when e.Message.StartsWith("INVALID_STATE_TRANSITION", StringComparison.Ordinal) => (StatusCodes.Status409Conflict, "INVALID_STATE_TRANSITION", "Invalid state transition"),
+        InvalidOperationException e when e.Message.StartsWith("EXECUTION_UNKNOWN", StringComparison.Ordinal) => (StatusCodes.Status503ServiceUnavailable, "RECONCILIATION_REQUIRED", "The provider outcome is being reconciled"),
+        _ => (StatusCodes.Status500InternalServerError, "INTERNAL_ERROR", "The request could not be completed")
+    };
+    context.Response.StatusCode = status;
+    await Results.Problem(statusCode: status, title: title, extensions: new Dictionary<string, object?> { ["code"] = code }).ExecuteAsync(context);
+}));
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -402,8 +443,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHealthChecks("/health/live").AllowAnonymous();
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+}).AllowAnonymous();
 app.Run();
 
 public partial class Program { } // exposed for WebApplicationFactory-based integration tests

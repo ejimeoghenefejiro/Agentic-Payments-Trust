@@ -23,12 +23,6 @@ if (args.Contains("--intelligence-demo"))
     return;
 }
 
-if (args.Contains("--mandate-demo"))
-{
-    MandateDemo.Run();
-    return;
-}
-
 if (args.Contains("--intelligence-phase3-demo"))
 {
     IntelligencePhase3Demo.Run();

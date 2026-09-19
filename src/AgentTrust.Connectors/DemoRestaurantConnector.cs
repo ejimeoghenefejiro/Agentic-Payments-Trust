@@ -9,7 +9,8 @@ using AgentTrust.Commerce;
 namespace AgentTrust.Connectors;
 
 public sealed class DemoRestaurantConnector : IServiceConnector, IRestaurantSearchCapability,
-    IRestaurantMenuCapability, IRestaurantQuoteCapability, IRestaurantOrderCapability
+    IRestaurantMenuCapability, IRestaurantQuoteCapability, IRestaurantOrderCapability,
+    IFulfilmentOptionsCapability, IFulfilmentQuoteCapability
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IServiceActionAuthorisationService _authorisations;
@@ -148,6 +149,11 @@ public sealed class DemoRestaurantConnector : IServiceConnector, IRestaurantSear
 
     public Task<RestaurantOrderResult?> GetOrderStatusAsync(string providerOrderId, CancellationToken ct = default) =>
         Task.FromResult(_ordersById.GetValueOrDefault(providerOrderId));
+
+    public Task<IReadOnlyList<FulfilmentOption>> GetFulfilmentOptionsAsync(string orderIntentId, CancellationToken ct = default)
+    { var now = DateTimeOffset.UtcNow; return Task.FromResult<IReadOnlyList<FulfilmentOption>>([new("restaurant-delivery", ProviderId, FulfilmentMode.MerchantDelivery, "Restaurant delivery", true, "GBP", 2.50m, EstimatedDeliveryAt: now.AddMinutes(35)), new("restaurant-pickup", ProviderId, FulfilmentMode.CustomerPickup, "Restaurant pickup", true, "GBP", .50m, EstimatedReadyAt: now.AddMinutes(15), ProviderReference: "restaurant-main"), new("restaurant-courier", "courier-demo", FulfilmentMode.ThirdPartyDelivery, "Courier delivery", true, "GBP", 4.50m, EstimatedDeliveryAt: now.AddMinutes(45))]); }
+    public Task<FulfilmentQuote> GetFulfilmentQuoteAsync(FulfilmentQuoteRequest request, CancellationToken ct = default)
+    { if (request.ProviderId != ProviderId || request.Mode == FulfilmentMode.ThirdPartyDelivery) throw new InvalidOperationException("Use the selected courier provider for third-party delivery quotes."); var delivery = request.Mode == FulfilmentMode.MerchantDelivery ? 2.50m : 0m; var service = request.Mode == FulfilmentMode.CustomerPickup ? .50m : 0m; return Task.FromResult(new FulfilmentQuote($"restaurant_fulfilment_quote_{Guid.NewGuid():N}", ProviderId, request.Mode, "GBP", delivery, service, 0, 0, delivery + service, null, request.Mode == FulfilmentMode.MerchantDelivery ? DateTimeOffset.UtcNow.AddMinutes(35) : null, DateTimeOffset.UtcNow.AddMinutes(5), $"restaurant_fulfilment_ref_{Guid.NewGuid():N}")); }
 
     private CapabilityInvocationResult Reserve(JsonElement input)
     {

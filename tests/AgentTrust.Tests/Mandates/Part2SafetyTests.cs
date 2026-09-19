@@ -9,7 +9,7 @@ namespace AgentTrust.Tests.Mandates;
 public class Part2SafetyTests
 {
     private static FinancialMandate Mandate(decimal? daily = null, decimal? weekly = 20m, decimal? monthly = 50m) =>
-        new("M1", "P1", "A1", "Uber", "transport", "PM1", 25m, weekly, monthly, "GBP",
+        new("M1", "P1", "A1", "LocalServices", "cleaning", "PM1", 25m, weekly, monthly, "GBP",
             new Dictionary<string, string> { ["route"] = "A-B" }, AboveLimitAction.RequireApproval,
             MandateStatus.Active, DateTimeOffset.Parse("2027-01-01T00:00:00Z"), DateTimeOffset.Parse("2028-01-01T00:00:00Z"))
         { DailyLimit = daily };
@@ -46,7 +46,7 @@ public class Part2SafetyTests
         var store = new InMemoryOneOffAuthorisationStore();
         var fingerprint = TransactionFingerprint.Create(Mandate(), "E1", 31.40m, "GBP",
             new Dictionary<string, string> { ["route"] = "A-B" });
-        var item = new OneOffAuthorisation("O1", "E1", "M1", 1, fingerprint, 31.40m, "GBP", "Uber",
+        var item = new OneOffAuthorisation("O1", "E1", "M1", 1, fingerprint, 31.40m, "GBP", "LocalServices",
             "PM1", "human-1", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(5),
             OneOffAuthorisationStatus.Active, null);
         store.Save(item);
@@ -76,8 +76,8 @@ public class Part2SafetyTests
     {
         var adapter = new MockPaymentAdapter();
         var coordinator = new PaymentExecutionCoordinator(adapter, new InMemoryPaymentAttemptStore());
-        var intent = new TransactionIntent("TX1", "A1", "P1", "purchase:transport", "Uber", "transport",
-            20m, "ride", Array.Empty<EvidenceItem>(), DateTimeOffset.UtcNow, "IDEMPOTENT-1");
+        var intent = new TransactionIntent("TX1", "A1", "P1", "purchase:service", "LocalServices", "cleaning",
+            20m, "service", Array.Empty<EvidenceItem>(), DateTimeOffset.UtcNow, "IDEMPOTENT-1");
 
         var first = coordinator.Submit(intent);
         var retry = coordinator.Submit(intent with { TransactionId = "TX1-retry" });

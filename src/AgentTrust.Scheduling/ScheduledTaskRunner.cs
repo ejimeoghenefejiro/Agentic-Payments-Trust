@@ -3,16 +3,14 @@ using AgentTrust.Tasks;
 
 namespace AgentTrust.Scheduling;
 
-/// <summary>Simulates "the agent requests the current price" (e.g. Uber's live fare) at
-/// execution time — a real implementation would call the merchant's API.</summary>
+/// <summary>Requests the provider's current price at execution time.</summary>
 public interface IPriceQuoteProvider
 {
     decimal GetQuote(string merchant, IReadOnlyDictionary<string, string> context);
 }
 
 /// <summary>Checks every active task's schedule and, when due, requests a live quote and
-/// executes it through the TaskExecutionOrchestrator — the doc's "07:20 -> scheduled task
-/// activates -> agent requests current Uber price -> ... -> Uber booked" flow.</summary>
+/// executes it through the TaskExecutionOrchestrator.</summary>
 public sealed class ScheduledTaskRunner
 {
     private readonly ITaskStore _tasks;

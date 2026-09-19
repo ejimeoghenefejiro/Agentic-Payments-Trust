@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 {
     [DbContext(typeof(AgentTrustDbContext))]
-    [Migration("20260919085224_AddDurableHotelBookings")]
-    partial class AddDurableHotelBookings
+    [Migration("20260919211039_AddDurableFulfilmentOperations")]
+    partial class AddDurableFulfilmentOperations
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -1107,72 +1107,14 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("FinancialMandates");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelBookingAuditEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentCancellationEntity", b =>
                 {
-                    b.Property<long>("Sequence")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Sequence"));
-
-                    b.Property<string>("BookingId")
-                        .IsRequired()
+                    b.Property<string>("CancellationId")
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<string>("CurrentHash")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("DataJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("EventId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PreviousHash")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTimeOffset>("Timestamp")
-                        .HasColumnType("datetimeoffset");
-
-                    b.HasKey("Sequence");
-
-                    b.HasIndex("EventId")
-                        .IsUnique();
-
-                    b.HasIndex("BookingId", "Sequence");
-
-                    b.ToTable("HotelBookingAudits");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.HotelBookingEntity", b =>
-                {
-                    b.Property<string>("BookingId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<bool>("Accessible")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("AgentId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateOnly>("CheckIn")
-                        .HasColumnType("date");
-
-                    b.Property<DateOnly>("CheckOut")
-                        .HasColumnType("date");
+                    b.Property<decimal>("CancellationFee")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -1184,26 +1126,131 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.Property<string>("FailureReason")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<int>("Guests")
-                        .HasColumnType("int");
+                    b.Property<string>("FulfilmentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<string>("MandateId")
+                    b.Property<string>("ProviderReference")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("RefundAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CancellationId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("FulfilmentId", "Status");
+
+                    b.ToTable("FulfilmentCancellations");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentExecutionEntity", b =>
+                {
+                    b.Property<string>("FulfilmentIntentId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("CourierReference")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FulfilmentId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset?>("NextReconciliationAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Objective")
+                    b.Property<string>("ProviderReference")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("ReconciliationAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("FulfilmentIntentId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderReference")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextReconciliationAt");
+
+                    b.ToTable("FulfilmentExecutions");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentIntentEntity", b =>
+                {
+                    b.Property<string>("FulfilmentIntentId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("AgentId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("PaymentMethodId")
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("PaymentReference")
+                    b.Property<string>("DestinationReference")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("MerchantOrderId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PickupLocationId")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("PrincipalId")
@@ -1214,54 +1261,34 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("ProviderReference")
-                        .HasColumnType("nvarchar(450)");
+                    b.Property<string>("QuoteHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("QuoteId")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ReservationId")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RoomId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<decimal>("Total")
+                    b.Property<decimal>("TotalAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("datetimeoffset");
 
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.HasKey("BookingId");
+                    b.HasKey("FulfilmentIntentId");
 
-                    b.HasIndex("IdempotencyKey")
-                        .IsUnique();
+                    b.HasIndex("QuoteId");
 
-                    b.HasIndex("ProviderReference");
+                    b.HasIndex("PrincipalId", "CreatedAt");
 
-                    b.HasIndex("PrincipalId", "Status");
-
-                    b.ToTable("HotelBookings");
+                    b.ToTable("FulfilmentIntents");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelQuoteEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentQuoteEntity", b =>
                 {
                     b.Property<string>("QuoteId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("BookingId")
-                        .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -1271,14 +1298,26 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("DetailsJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ProviderReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("QuoteHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("QuoteJson")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
@@ -1292,29 +1331,76 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 
                     b.HasKey("QuoteId");
 
-                    b.HasIndex("BookingId", "ExpiresAt");
+                    b.HasIndex("ProviderId", "ExpiresAt");
 
-                    b.ToTable("HotelQuotes");
+                    b.ToTable("FulfilmentQuotes");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelReservationEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentStatusHistoryEntity", b =>
                 {
-                    b.Property<string>("ReservationId")
-                        .HasColumnType("nvarchar(450)");
+                    b.Property<long>("SequenceNumber")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
 
-                    b.Property<string>("BookingId")
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SequenceNumber"));
+
+                    b.Property<string>("FulfilmentId")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreviousStatus")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderEventId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("ProviderTimestamp")
                         .HasColumnType("datetimeoffset");
 
-                    b.Property<DateTimeOffset>("ExpiresAt")
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("SequenceNumber");
+
+                    b.HasIndex("ProviderEventId")
+                        .IsUnique();
+
+                    b.HasIndex("FulfilmentId", "SequenceNumber");
+
+                    b.ToTable("FulfilmentStatusHistory");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentWebhookEventEntity", b =>
+                {
+                    b.Property<string>("ProviderEventId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1324,11 +1410,11 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.HasKey("ReservationId");
+                    b.HasKey("ProviderEventId");
 
-                    b.HasIndex("BookingId", "Status", "ExpiresAt");
+                    b.HasIndex("ProviderId", "Status", "ReceivedAt");
 
-                    b.ToTable("HotelReservations");
+                    b.ToTable("FulfilmentWebhookEvents");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>

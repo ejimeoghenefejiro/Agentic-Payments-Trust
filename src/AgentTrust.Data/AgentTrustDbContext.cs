@@ -51,10 +51,12 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<ConsumerMemoryRetrievalAuditEntity> ConsumerMemoryRetrievalAudits => Set<ConsumerMemoryRetrievalAuditEntity>();
     public DbSet<ConsumerMemoryOutboxEntity> ConsumerMemoryOutbox => Set<ConsumerMemoryOutboxEntity>();
     public DbSet<MandateLimitChangeProposalEntity> MandateLimitChangeProposals => Set<MandateLimitChangeProposalEntity>();
-    public DbSet<HotelBookingEntity> HotelBookings => Set<HotelBookingEntity>();
-    public DbSet<HotelQuoteEntity> HotelQuotes => Set<HotelQuoteEntity>();
-    public DbSet<HotelReservationEntity> HotelReservations => Set<HotelReservationEntity>();
-    public DbSet<HotelBookingAuditEntity> HotelBookingAudits => Set<HotelBookingAuditEntity>();
+    public DbSet<FulfilmentQuoteEntity> FulfilmentQuotes => Set<FulfilmentQuoteEntity>();
+    public DbSet<FulfilmentIntentEntity> FulfilmentIntents => Set<FulfilmentIntentEntity>();
+    public DbSet<FulfilmentExecutionEntity> FulfilmentExecutions => Set<FulfilmentExecutionEntity>();
+    public DbSet<FulfilmentStatusHistoryEntity> FulfilmentStatusHistory => Set<FulfilmentStatusHistoryEntity>();
+    public DbSet<FulfilmentWebhookEventEntity> FulfilmentWebhookEvents => Set<FulfilmentWebhookEventEntity>();
+    public DbSet<FulfilmentCancellationEntity> FulfilmentCancellations => Set<FulfilmentCancellationEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -271,10 +273,18 @@ public sealed class AgentTrustDbContext : DbContext
         modelBuilder.Entity<ConsumerMemoryRetrievalAuditEntity>(b => { b.HasKey(x => x.AuditId); b.HasIndex(x => new { x.PrincipalId, x.RetrievedAt }); });
         Configure<ConsumerMemoryOutboxEntity>(modelBuilder, x => x.OutboxId); modelBuilder.Entity<ConsumerMemoryOutboxEntity>(b => { b.ToTable("ConsumerMemoryOutbox"); b.HasIndex(x => new { x.Status, x.NextAttemptAt, x.CreatedAt }); b.HasIndex(x => new { x.MemoryId, x.Status }); });
         Configure<MandateLimitChangeProposalEntity>(modelBuilder, x => x.ProposalId); modelBuilder.Entity<MandateLimitChangeProposalEntity>(b => { b.HasIndex(x => new { x.PrincipalId, x.Status, x.ExpiresAt }); b.HasIndex(x => new { x.MandateId, x.Status }); b.Property(x => x.PerTransactionLimit).HasPrecision(18, 2); b.Property(x => x.WeeklyLimit).HasPrecision(18, 2); b.Property(x => x.MonthlyLimit).HasPrecision(18, 2); });
-        Configure<HotelBookingEntity>(modelBuilder, x => x.BookingId); modelBuilder.Entity<HotelBookingEntity>(b => { b.HasIndex(x => x.IdempotencyKey).IsUnique(); b.HasIndex(x => new { x.PrincipalId, x.Status }); b.HasIndex(x => x.ProviderReference); Money(b.Property(x => x.Total)); });
-        Configure<HotelQuoteEntity>(modelBuilder, x => x.QuoteId); modelBuilder.Entity<HotelQuoteEntity>(b => { b.HasIndex(x => new { x.BookingId, x.ExpiresAt }); Money(b.Property(x => x.Total)); });
-        Configure<HotelReservationEntity>(modelBuilder, x => x.ReservationId); modelBuilder.Entity<HotelReservationEntity>(b => b.HasIndex(x => new { x.BookingId, x.Status, x.ExpiresAt }));
-        modelBuilder.Entity<HotelBookingAuditEntity>(b => { b.HasKey(x => x.Sequence); b.Property(x => x.Sequence).ValueGeneratedOnAdd(); b.HasIndex(x => x.EventId).IsUnique(); b.HasIndex(x => new { x.BookingId, x.Sequence }); });
+
+        Configure<FulfilmentQuoteEntity>(modelBuilder, x => x.QuoteId);
+        modelBuilder.Entity<FulfilmentQuoteEntity>(b => { b.HasIndex(x => new { x.ProviderId, x.ExpiresAt }); b.Property(x => x.Total).HasPrecision(18, 2); });
+        Configure<FulfilmentIntentEntity>(modelBuilder, x => x.FulfilmentIntentId);
+        modelBuilder.Entity<FulfilmentIntentEntity>(b => { b.HasIndex(x => new { x.PrincipalId, x.CreatedAt }); b.HasIndex(x => x.QuoteId); b.Property(x => x.TotalAmount).HasPrecision(18, 2); });
+        Configure<FulfilmentExecutionEntity>(modelBuilder, x => x.FulfilmentIntentId);
+        modelBuilder.Entity<FulfilmentExecutionEntity>(b => { b.HasIndex(x => x.IdempotencyKey).IsUnique(); b.HasIndex(x => x.ProviderReference).IsUnique().HasFilter(null); b.HasIndex(x => new { x.Status, x.NextReconciliationAt }); });
+        modelBuilder.Entity<FulfilmentStatusHistoryEntity>(b => { b.HasKey(x => x.SequenceNumber); b.Property(x => x.SequenceNumber).ValueGeneratedOnAdd(); b.HasIndex(x => x.ProviderEventId).IsUnique(); b.HasIndex(x => new { x.FulfilmentId, x.SequenceNumber }); });
+        Configure<FulfilmentWebhookEventEntity>(modelBuilder, x => x.ProviderEventId);
+        modelBuilder.Entity<FulfilmentWebhookEventEntity>(b => b.HasIndex(x => new { x.ProviderId, x.Status, x.ReceivedAt }));
+        Configure<FulfilmentCancellationEntity>(modelBuilder, x => x.CancellationId);
+        modelBuilder.Entity<FulfilmentCancellationEntity>(b => { b.HasIndex(x => x.IdempotencyKey).IsUnique(); b.HasIndex(x => new { x.FulfilmentId, x.Status }); b.Property(x => x.CancellationFee).HasPrecision(18, 2); b.Property(x => x.RefundAmount).HasPrecision(18, 2); });
 
         static void Configure<TEntity>(ModelBuilder builder,
             System.Linq.Expressions.Expression<Func<TEntity, object?>> key) where TEntity : class

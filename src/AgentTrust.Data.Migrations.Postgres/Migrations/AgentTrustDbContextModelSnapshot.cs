@@ -1102,72 +1102,14 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("FinancialMandates");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelBookingAuditEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentCancellationEntity", b =>
                 {
-                    b.Property<long>("Sequence")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Sequence"));
-
-                    b.Property<string>("BookingId")
-                        .IsRequired()
+                    b.Property<string>("CancellationId")
                         .HasColumnType("text");
 
-                    b.Property<string>("CurrentHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("DataJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("EventId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PreviousHash")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("Timestamp")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Sequence");
-
-                    b.HasIndex("EventId")
-                        .IsUnique();
-
-                    b.HasIndex("BookingId", "Sequence");
-
-                    b.ToTable("HotelBookingAudits");
-                });
-
-            modelBuilder.Entity("AgentTrust.Data.HotelBookingEntity", b =>
-                {
-                    b.Property<string>("BookingId")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("Accessible")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("AgentId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateOnly>("CheckIn")
-                        .HasColumnType("date");
-
-                    b.Property<DateOnly>("CheckOut")
-                        .HasColumnType("date");
+                    b.Property<decimal>("CancellationFee")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1179,57 +1121,24 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.Property<string>("FailureReason")
                         .HasColumnType("text");
 
-                    b.Property<int>("Guests")
-                        .HasColumnType("integer");
+                    b.Property<string>("FulfilmentId")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("IdempotencyKey")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("MandateId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Objective")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PaymentMethodId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PaymentReference")
-                        .HasColumnType("text");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("ProviderReference")
                         .HasColumnType("text");
 
-                    b.Property<string>("QuoteId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ReservationId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("RoomId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<decimal?>("RefundAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<decimal>("Total")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1238,24 +1147,80 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.HasKey("BookingId");
+                    b.HasKey("CancellationId");
 
                     b.HasIndex("IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("ProviderReference");
+                    b.HasIndex("FulfilmentId", "Status");
 
-                    b.HasIndex("PrincipalId", "Status");
-
-                    b.ToTable("HotelBookings");
+                    b.ToTable("FulfilmentCancellations");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelQuoteEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentExecutionEntity", b =>
                 {
-                    b.Property<string>("QuoteId")
+                    b.Property<string>("FulfilmentIntentId")
                         .HasColumnType("text");
 
-                    b.Property<string>("BookingId")
+                    b.Property<string>("CourierReference")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FulfilmentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("NextReconciliationAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderReference")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ReconciliationAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("FulfilmentIntentId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderReference")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextReconciliationAt");
+
+                    b.ToTable("FulfilmentExecutions");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentIntentEntity", b =>
+                {
+                    b.Property<string>("FulfilmentIntentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -1266,14 +1231,88 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("DetailsJson")
+                    b.Property<string>("DestinationReference")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MerchantOrderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PickupLocationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QuoteHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QuoteId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("FulfilmentIntentId");
+
+                    b.HasIndex("QuoteId");
+
+                    b.HasIndex("PrincipalId", "CreatedAt");
+
+                    b.ToTable("FulfilmentIntents");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentQuoteEntity", b =>
+                {
+                    b.Property<string>("QuoteId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderReference")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QuoteHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("QuoteJson")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -1287,29 +1326,76 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
 
                     b.HasKey("QuoteId");
 
-                    b.HasIndex("BookingId", "ExpiresAt");
+                    b.HasIndex("ProviderId", "ExpiresAt");
 
-                    b.ToTable("HotelQuotes");
+                    b.ToTable("FulfilmentQuotes");
                 });
 
-            modelBuilder.Entity("AgentTrust.Data.HotelReservationEntity", b =>
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentStatusHistoryEntity", b =>
                 {
-                    b.Property<string>("ReservationId")
-                        .HasColumnType("text");
+                    b.Property<long>("SequenceNumber")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
 
-                    b.Property<string>("BookingId")
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("SequenceNumber"));
+
+                    b.Property<string>("FulfilmentId")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreviousStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderEventId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ProviderTimestamp")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset>("ExpiresAt")
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("SequenceNumber");
+
+                    b.HasIndex("ProviderEventId")
+                        .IsUnique();
+
+                    b.HasIndex("FulfilmentId", "SequenceNumber");
+
+                    b.ToTable("FulfilmentStatusHistory");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.FulfilmentWebhookEventEntity", b =>
+                {
+                    b.Property<string>("ProviderEventId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1319,11 +1405,11 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.HasKey("ReservationId");
+                    b.HasKey("ProviderEventId");
 
-                    b.HasIndex("BookingId", "Status", "ExpiresAt");
+                    b.HasIndex("ProviderId", "Status", "ReceivedAt");
 
-                    b.ToTable("HotelReservations");
+                    b.ToTable("FulfilmentWebhookEvents");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>

@@ -97,15 +97,27 @@ public sealed class HmacServiceActionAuthorisationService : IServiceActionAuthor
 }
 
 public sealed record TrustedServiceActionResult(ServiceTrustDecision TrustDecision, ServiceActionAuthorisation? Authorisation, ServiceExecutionResult? Execution);
+public interface IExternalExecutionControl
+{
+    bool IsAllowed(ServiceActionProposal proposal, out string reason);
+}
+
+public sealed class AllowExternalExecution : IExternalExecutionControl
+{
+    public bool IsAllowed(ServiceActionProposal proposal, out string reason) { reason = ""; return true; }
+}
+
 public sealed class TrustedServiceActionOrchestrator
 {
-    private readonly IServiceActionTrustPolicy _policy; private readonly IServiceActionAuthorisationService _authorisations;
-    public TrustedServiceActionOrchestrator(IServiceActionTrustPolicy policy, IServiceActionAuthorisationService authorisations) { _policy = policy; _authorisations = authorisations; }
+    private readonly IServiceActionTrustPolicy _policy; private readonly IServiceActionAuthorisationService _authorisations; private readonly IExternalExecutionControl _executionControl;
+    public TrustedServiceActionOrchestrator(IServiceActionTrustPolicy policy, IServiceActionAuthorisationService authorisations, IExternalExecutionControl? executionControl = null) { _policy = policy; _authorisations = authorisations; _executionControl = executionControl ?? new AllowExternalExecution(); }
     public async Task<TrustedServiceActionResult> ExecuteAsync(ServiceActionProposal proposal, ServiceQuote quote, IServiceConnector provider, DateTimeOffset now, CancellationToken token = default,
         Func<ServiceActionProposal, ServiceQuote, ServiceActionAuthorisation, string, CancellationToken, Task<ServiceExecutionResult?>>? beforeExecution = null)
     {
         if (provider.ProviderId != proposal.ProviderId) throw new InvalidOperationException("Provider does not match proposal.");
         var decision = _policy.Evaluate(proposal, quote, now); if (!decision.Approved) return new(decision, null, null);
+        if (!_executionControl.IsAllowed(proposal, out var disabledReason))
+            return new(new(false, [disabledReason], decision.PolicyVersion), null, null);
         var authorisation = _authorisations.Issue(proposal, quote, decision.PolicyVersion, now);
         var reservation = await provider.InvokeAsync("reserve", JsonSerializer.SerializeToElement(new { quoteId = quote.QuoteId }), token);
         if (!reservation.Success) return new(decision, authorisation, new(false, "Failed", null, reservation.Value, reservation.Error));

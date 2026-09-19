@@ -876,69 +876,20 @@ the risk engine end-to-end on both the night-time scenario and an ordinary trans
 evidence flowing into the *actual*, unmodified `TrustFramework` produces the correct escalation,
 with the AI's evidence traceable in the resulting audit record.
 
-## Consumer Financial Mandates (Phase 2: PaymentMethods, Mandates, Tasks, Scheduling)
+## Consumer Financial Mandates
 
-Four new projects implementing the vision doc's Phase 2 (sections 11-17): tokenised payment
-methods, the Financial Mandate concept, recurring tasks, and scheduling — culminating in the
-doc's own worked example, reproduced exactly.
+Financial mandates place clear limits around agent actions. They bind an agent, provider,
+purpose, payment method, currency, transaction limit and optional daily, weekly or monthly
+limits. A request outside those limits is denied or sent for explicit approval before execution.
 
-```bash
-dotnet run --project src/AgentTrust.Runner -- --mandate-demo
-```
+The active product domains are:
 
-Connects a card (tokenised — see below), creates a Financial Mandate ("book an Uber for my
-girlfriend every Monday at 07:30, spend up to £25, ask me first above that"), then runs all
-three of the doc's worked scenarios: a legitimate £18.70 ride (approved and paid), a £31.40
-surge-priced ride (escalates, then a human approves *that specific ride* without raising the
-mandate's own £25 limit for any future one), and a £22 ride — within the limit — to a different
-pickup/destination/recipient (escalates anyway, because the amount was never what was wrong).
-Every authorisation decision in all three is made by the same, unmodified `TrustFramework`.
+- Grocery commerce
+- Restaurant ordering
+- Home-service booking
 
-**`AgentTrust.PaymentMethods`** — `PaymentMethod` (token + display metadata only — `CardBrand`,
-`Last4`, `ExpiryMonth/Year` — no field capable of holding a PAN or CVV, checked by a test that
-reflects over the type), `ICardTokenizationProvider`/`MockCardTokenizationProvider` (raw card
-number and CVV exist only as parameters to one call and are never returned, logged, or stored),
-`PaymentMethodService` (the doc's "connect card" flow).
-
-**`AgentTrust.Mandates`** — `FinancialMandate` (answers "how may money be used for *this task*",
-narrower than and layered on top of `DelegatedAuthority`, which answers "what can the agent do at
-all"), `MandateToAuthorityMapper` (converts a mandate into the frozen core's `DelegatedAuthority`
-so the *existing* `PolicyEngine` does the actual amount/merchant authorisation — the mandate layer
-never reimplements it), `IMandateUsageTracker` (weekly/monthly cumulative spend — a concept the
-frozen `DelegatedAuthority` doesn't have, so it's tracked here rather than by extending the frozen
-core), `MandateEvaluationService` (checks what a policy engine structurally cannot: does this
-task's context — route, recipient, whatever `TaskParameters` the mandate carries — match what was
-authorised; implements the doc's "context can override apparent normality" scenario).
-
-**`AgentTrust.Tasks`** — `AgentTask`, and `TaskExecutionOrchestrator`, the piece that makes the
-one-off-approval guarantee real: `TrustFramework.ProcessTransaction` executes payment immediately
-on Approve, so nothing is sent to it until a human has actually resolved an escalation. On
-context-mismatch or above-limit-with-`RequireApproval`, the orchestrator holds the execution
-pending rather than calling the trust layer speculatively; on approval, it grants a
-*single-call-scoped* elevated authority (via `MandateToAuthorityMapper`'s one-off-amount
-parameter), makes exactly one `ProcessTransaction` call, then immediately re-grants the mandate's
-normal authority — verified by a test that a second ride the following week is still capped at
-the original limit.
-
-**`AgentTrust.Scheduling`** — `RecurringSchedule` (day-of-week + time, with tolerance — "every
-Monday at 07:30"), `ScheduledTaskRunner` (checks every active task, and for the ones that are due,
-requests a live price quote via `IPriceQuoteProvider` and executes through the orchestrator — the
-doc's "07:20 → scheduled task activates → agent requests current price → ..." flow).
-
-**Tests** (`tests/AgentTrust.Tests/Mandates/`, 11 tests): payment-method tokenisation and
-expiry/revocation, and `UberMandateScenarioTests` — the three worked scenarios above, plus a
-rejected-escalation case and an expired-mandate hard-block case, and a scheduling test proving
-only due tasks execute.
-
-**A real bug found while building this:** `MandateToAuthorityMapper` originally mapped a
-mandate's `WeeklyLimit` onto the trust layer's `DailyLimit` field. That worked for the legitimate
-scenario, but broke the surge-approval scenario — the one-off elevated per-transaction amount
-(£31.40) was still checked against `DailyLimit` mapped from `WeeklyLimit` (£25), so the trust
-layer denied a transaction the mandate layer had just approved. Weekly-cap enforcement already
-happens correctly in `MandateEvaluationService` before anything reaches the trust layer; mapping
-it onto `DailyLimit` too created a second, independent, conflicting cap. Fixed by mapping
-`DailyLimit` to the same effective per-transaction limit instead, so it never competes with
-weekly enforcement.
+All three use the same provider-neutral flow: provider discovery, an authoritative quote,
+deterministic trust evaluation, signed authorisation, idempotent execution and recorded evidence.
 
 ## Advanced Financial Intelligence (Phase 3: graph, richer risk engines, learning)
 
