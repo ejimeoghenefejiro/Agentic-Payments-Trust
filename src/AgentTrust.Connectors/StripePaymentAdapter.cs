@@ -16,13 +16,18 @@ public sealed record StripePaymentOptions(StripePaymentMode Mode = StripePayment
 public sealed class StripePaymentAdapter : IPlatformPaymentProcessor
 {
     public string ProviderName => "Stripe";
-    private readonly PaymentIntentService _service; private readonly IPaymentMethodStore _methods;
+    private readonly PaymentIntentService _service;
+    private readonly RefundService _refunds;
+    private readonly IPaymentMethodStore _methods;
     public StripePaymentAdapter(string secretKey, StripePaymentOptions options, IPaymentMethodStore methods)
     {
         if (string.IsNullOrWhiteSpace(secretKey)) throw new InvalidOperationException("STRIPE_SECRET_KEY is required.");
         if (options.Mode == StripePaymentMode.Test && !secretKey.StartsWith("sk_test_", StringComparison.Ordinal)) throw new InvalidOperationException("Stripe test mode requires a test secret key.");
         if (options.Mode == StripePaymentMode.Live && !secretKey.StartsWith("sk_live_", StringComparison.Ordinal)) throw new InvalidOperationException("Stripe live mode requires a live secret key.");
-        _service = new PaymentIntentService(new StripeClient(secretKey)); _methods = methods;
+        var client = new StripeClient(secretKey);
+        _service = new PaymentIntentService(client);
+        _refunds = new RefundService(client);
+        _methods = methods;
     }
     public async Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default)
     {
@@ -53,5 +58,38 @@ public sealed class StripePaymentAdapter : IPlatformPaymentProcessor
             "requires_payment_method" or "canceled" => new(PlatformPaymentStatus.Failed, payment.Id, null, payment.LastPaymentError?.Message ?? payment.Status),
             _ => new(PlatformPaymentStatus.Unknown, payment.Id, null, payment.Status)
         };
+    }
+
+    public async Task<PlatformRefundResult> RefundAsync(
+        string paymentReference,
+        decimal amount,
+        string currency,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (amount <= 0) return new(PlatformRefundStatus.Succeeded, null, null);
+
+        try
+        {
+            var refund = await _refunds.CreateAsync(
+                new RefundCreateOptions
+                {
+                    PaymentIntent = paymentReference,
+                    Amount = checked((long)decimal.Round(amount * 100, 0, MidpointRounding.AwayFromZero)),
+                    Metadata = new Dictionary<string, string> { ["currency"] = currency }
+                },
+                new RequestOptions { IdempotencyKey = idempotencyKey },
+                cancellationToken);
+            return refund.Status switch
+            {
+                "succeeded" => new(PlatformRefundStatus.Succeeded, refund.Id, null),
+                "pending" => new(PlatformRefundStatus.Processing, refund.Id, null),
+                _ => new(PlatformRefundStatus.Failed, refund.Id, refund.FailureReason)
+            };
+        }
+        catch (StripeException ex)
+        {
+            return new(PlatformRefundStatus.Failed, null, ex.StripeError?.Code ?? "STRIPE_REFUND_FAILED");
+        }
     }
 }

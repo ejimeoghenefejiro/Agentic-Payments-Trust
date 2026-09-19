@@ -1102,6 +1102,230 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("FinancialMandates");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.HotelBookingAuditEntity", b =>
+                {
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Sequence"));
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CurrentHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreviousHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Sequence");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("BookingId", "Sequence");
+
+                    b.ToTable("HotelBookingAudits");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.HotelBookingEntity", b =>
+                {
+                    b.Property<string>("BookingId")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Accessible")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("CheckIn")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly>("CheckOut")
+                        .HasColumnType("date");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Guests")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MandateId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Objective")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PaymentMethodId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PaymentReference")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderReference")
+                        .HasColumnType("text");
+
+                    b.Property<string>("QuoteId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReservationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RoomId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("BookingId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderReference");
+
+                    b.HasIndex("PrincipalId", "Status");
+
+                    b.ToTable("HotelBookings");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.HotelQuoteEntity", b =>
+                {
+                    b.Property<string>("QuoteId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DetailsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("QuoteId");
+
+                    b.HasIndex("BookingId", "ExpiresAt");
+
+                    b.ToTable("HotelQuotes");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.HotelReservationEntity", b =>
+                {
+                    b.Property<string>("ReservationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BookingId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ReservationId");
+
+                    b.HasIndex("BookingId", "Status", "ExpiresAt");
+
+                    b.ToTable("HotelReservations");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.InvestigationStateEntity", b =>
                 {
                     b.Property<string>("InvestigationId")

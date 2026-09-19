@@ -70,10 +70,22 @@ public sealed record ConnectorPurchaseResult(ConnectorPurchaseStatus Status, str
 public enum PlatformPaymentStatus { Succeeded, RequiresAction, Processing, Failed, Unknown }
 public sealed record PlatformPaymentResult(PlatformPaymentStatus Status, string? ProviderReference,
     string? RequiredAction, string? FailureReason);
+public enum PlatformRefundStatus { Succeeded, Processing, Failed, Unsupported }
+public sealed record PlatformRefundResult(PlatformRefundStatus Status, string? ProviderReference, string? FailureReason);
 public interface IPlatformPaymentProcessor
 {
     string ProviderName { get; }
     Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default);
+    Task<PlatformRefundResult> RefundAsync(
+        string paymentReference,
+        decimal amount,
+        string currency,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new PlatformRefundResult(
+            PlatformRefundStatus.Unsupported,
+            null,
+            "REFUNDS_NOT_SUPPORTED"));
 }
 
 public sealed record LivePurchaseOptions(bool Enabled = false, decimal MaxPilotAmountGbp = 5,

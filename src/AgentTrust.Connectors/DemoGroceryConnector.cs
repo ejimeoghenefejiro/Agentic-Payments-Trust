@@ -100,4 +100,6 @@ public sealed class MockPlatformPaymentProcessor : IPlatformPaymentProcessor
     public string ProviderName => "Mock";
     public Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default)
     { lock (_gate) { if (_results.TryGetValue(intent.IdempotencyKey, out var existing)) return Task.FromResult(existing); SubmissionCount++; var result = new PlatformPaymentResult(NextStatus, $"demo_pay_{intent.PurchaseIntentId}", NextStatus == PlatformPaymentStatus.RequiresAction ? "demo_client_secret" : null, NextStatus == PlatformPaymentStatus.Failed ? "SIMULATED_DECLINE" : null); _results[intent.IdempotencyKey] = result; return Task.FromResult(result); } }
+    public Task<PlatformRefundResult> RefundAsync(string paymentReference, decimal amount, string currency, string idempotencyKey, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new PlatformRefundResult(PlatformRefundStatus.Succeeded, $"demo_refund_{paymentReference}", null));
 }

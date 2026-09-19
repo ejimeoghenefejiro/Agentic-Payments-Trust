@@ -24,10 +24,20 @@ using Microsoft.IdentityModel.Tokens;
 using AgentTrust.Api.Authentication;
 using AgentTrust.Api;
 using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.DataProtection;
+using System.Security.Cryptography.X509Certificates;
 
 var builder = WebApplication.CreateBuilder(args);
+if (builder.Environment.IsEnvironment("Testing")) { builder.Logging.ClearProviders(); builder.Logging.AddConsole(); }
+var dataProtectionPath = builder.Configuration["DataProtection:KeysPath"] ?? Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH");
+if (string.IsNullOrWhiteSpace(dataProtectionPath) && builder.Environment.IsEnvironment("Testing")) dataProtectionPath = Path.Combine(Path.GetTempPath(), "agenttrust-data-protection-tests");
+var dataProtection = builder.Services.AddDataProtection().SetApplicationName("AgentTrust");
+if (!string.IsNullOrWhiteSpace(dataProtectionPath)) dataProtection.PersistKeysToFileSystem(Directory.CreateDirectory(dataProtectionPath));
+var dataProtectionCertificate = builder.Configuration["DataProtection:CertificateThumbprint"] ?? Environment.GetEnvironmentVariable("DATA_PROTECTION_CERTIFICATE_THUMBPRINT");
+if (!string.IsNullOrWhiteSpace(dataProtectionCertificate)) { using var certificateStore = new X509Store(StoreName.My, StoreLocation.CurrentUser); certificateStore.Open(OpenFlags.ReadOnly); var certificate = certificateStore.Certificates.Find(X509FindType.FindByThumbprint, dataProtectionCertificate, false).OfType<X509Certificate2>().SingleOrDefault() ?? throw new InvalidOperationException("The configured Data Protection certificate was not found."); dataProtection.ProtectKeysWithCertificate(certificate); }
+else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("DATA_PROTECTION_CERTIFICATE_THUMBPRINT is required outside Development/Testing.");
 
-builder.Services.AddControllers(options=>options.InputFormatters.Insert(0,new TextPlainInputFormatter()));
+builder.Services.AddControllers(options => options.InputFormatters.Insert(0, new TextPlainInputFormatter()));
 builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -70,16 +80,30 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.MapInboundClaims = false;
     options.TokenValidationParameters = developmentTokens ? new TokenValidationParameters
     {
-        ValidateIssuer=true,ValidIssuer="urn:agenttrust:development",ValidateAudience=true,ValidAudience="agenttrust-development",
-        ValidateIssuerSigningKey=true,IssuerSigningKey=new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(
-            builder.Configuration["Authentication:Development:SigningKey"]??throw new InvalidOperationException("Development SigningKey is required."))),
-        RequireSignedTokens=true,ValidateLifetime=true,NameClaimType="name",RoleClaimType="role",ClockSkew=TimeSpan.FromSeconds(30)
+        ValidateIssuer = true,
+        ValidIssuer = "urn:agenttrust:development",
+        ValidateAudience = true,
+        ValidAudience = "agenttrust-development",
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(
+            builder.Configuration["Authentication:Development:SigningKey"] ?? throw new InvalidOperationException("Development SigningKey is required."))),
+        RequireSignedTokens = true,
+        ValidateLifetime = true,
+        NameClaimType = "name",
+        RoleClaimType = "role",
+        ClockSkew = TimeSpan.FromSeconds(30)
     } : new TokenValidationParameters
     {
-        ValidateIssuer = true, ValidIssuer = authority ?? "urn:agenttrust:not-configured",
-        ValidateAudience = true, ValidAudience = audience ?? "agenttrust-not-configured",
-        ValidateIssuerSigningKey = true, RequireSignedTokens = true, ValidateLifetime = true,
-        NameClaimType = "name", RoleClaimType = "role", ClockSkew = TimeSpan.FromMinutes(2)
+        ValidateIssuer = true,
+        ValidIssuer = authority ?? "urn:agenttrust:not-configured",
+        ValidateAudience = true,
+        ValidAudience = audience ?? "agenttrust-not-configured",
+        ValidateIssuerSigningKey = true,
+        RequireSignedTokens = true,
+        ValidateLifetime = true,
+        NameClaimType = "name",
+        RoleClaimType = "role",
+        ClockSkew = TimeSpan.FromMinutes(2)
     };
 });
 builder.Services.AddAuthorization(options =>
@@ -185,16 +209,17 @@ if (connectionString is not null)
     builder.Services.AddScoped<IConnectedServiceStore, EfConnectedServiceStore>();
     builder.Services.AddScoped<IPurchaseExecutionStore, EfPurchaseExecutionStore>();
     builder.Services.AddScoped<IMandateStore, EfMandateStore>();
-    builder.Services.AddScoped<IMandateLimitChangeStore,EfMandateLimitChangeStore>();
+    builder.Services.AddScoped<IMandateLimitChangeStore, EfMandateLimitChangeStore>();
     builder.Services.AddScoped<IMandateUsageTracker, EfMandateUsageTracker>();
     builder.Services.AddScoped<IOneOffAuthorisationStore, EfOneOffAuthorisationStore>();
     builder.Services.AddScoped<IScheduledOccurrenceStore, EfScheduledOccurrenceStore>();
     builder.Services.AddScoped<IPaymentMethodStore, EfPaymentMethodStore>();
     builder.Services.AddScoped<IPurchaseAuditSink, EfPurchaseAuditSink>();
     builder.Services.AddScoped<ICommerceDurability, EfCommerceDurability>();
-    builder.Services.AddScoped<IConsumerPlanningStore,EfConsumerPlanningStore>();
-    builder.Services.AddScoped<IConsumerMemoryStore,EfConsumerMemoryStore>();
-    builder.Services.AddScoped<IConsumerMemoryService,ConsumerMemoryService>();
+    builder.Services.AddScoped<IConsumerPlanningStore, EfConsumerPlanningStore>();
+    builder.Services.AddScoped<IConsumerMemoryStore, EfConsumerMemoryStore>();
+    builder.Services.AddScoped<IConsumerMemoryService, ConsumerMemoryService>();
+    builder.Services.AddScoped<IHotelBookingStore, EfHotelBookingStore>();
     builder.Services.AddHostedService<ConsumerPilotWorker>();
 }
 else
@@ -204,16 +229,17 @@ else
     builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
     builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
     builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();
-    builder.Services.AddSingleton<IMandateLimitChangeStore,InMemoryMandateLimitChangeStore>();
+    builder.Services.AddSingleton<IMandateLimitChangeStore, InMemoryMandateLimitChangeStore>();
     builder.Services.AddSingleton<IMandateUsageTracker, InMemoryMandateUsageTracker>();
     builder.Services.AddSingleton<IOneOffAuthorisationStore, InMemoryOneOffAuthorisationStore>();
     builder.Services.AddSingleton<IScheduledOccurrenceStore, InMemoryScheduledOccurrenceStore>();
     builder.Services.AddSingleton<IPaymentMethodStore, InMemoryPaymentMethodStore>();
     builder.Services.AddSingleton<IPurchaseAuditSink, InMemoryPurchaseAuditSink>();
     builder.Services.AddSingleton<ICommerceDurability, InMemoryCommerceDurability>();
-    builder.Services.AddSingleton<IConsumerPlanningStore,InMemoryConsumerPlanningStore>();
-    builder.Services.AddSingleton<IConsumerMemoryStore,InMemoryConsumerMemoryStore>();
-    builder.Services.AddSingleton<IConsumerMemoryService,ConsumerMemoryService>();
+    builder.Services.AddSingleton<IConsumerPlanningStore, InMemoryConsumerPlanningStore>();
+    builder.Services.AddSingleton<IConsumerMemoryStore, InMemoryConsumerMemoryStore>();
+    builder.Services.AddSingleton<IConsumerMemoryService, ConsumerMemoryService>();
+    builder.Services.AddSingleton<IHotelBookingStore, InMemoryHotelBookingStore>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),
@@ -225,7 +251,7 @@ builder.Services.AddSingleton<IPurchaseAuthorisationService>(_ =>
 {
     var encoded = Environment.GetEnvironmentVariable("PURCHASE_AUTHORISATION_KEY");
     if (!string.IsNullOrWhiteSpace(encoded)) return new HmacPurchaseAuthorisationService(Convert.FromBase64String(encoded));
-    if (!builder.Environment.IsDevelopment()&&!builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development/Testing.");
+    if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("PURCHASE_AUTHORISATION_KEY is required outside Development/Testing.");
     return new HmacPurchaseAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 });
 builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
@@ -238,28 +264,45 @@ builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
         new StripePaymentOptions(mode), sp.GetRequiredService<IPaymentMethodStore>());
 });
 builder.Services.AddScoped<DemoGroceryConnector>();
-builder.Services.AddScoped<ICommerceConnector>(services=>services.GetRequiredService<DemoGroceryConnector>());
+builder.Services.AddScoped<ICommerceConnector>(services => services.GetRequiredService<DemoGroceryConnector>());
 builder.Services.AddScoped<MerchantConnectorRegistry>();
-builder.Services.AddSingleton<IObjectiveExpansionCapability,GroceryMealObjectiveCapability>();
+builder.Services.AddSingleton<IObjectiveExpansionCapability, GroceryMealObjectiveCapability>();
 builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
-builder.Services.AddScoped<IProviderPlanningCapability,GroceryProviderPlanningCapability>();
-builder.Services.AddScoped<IConsumerPurchaseRequestAgent,ConsumerPurchaseRequestAgent>();
+builder.Services.AddScoped<IProviderPlanningCapability, CommerceConnectorPlanningCapability>();
+builder.Services.AddScoped<IDomainPlanningCapability, GroceryDomainPlanningCapability>();
+builder.Services.AddScoped<IConsumerPurchaseRequestAgent, ConsumerPurchaseRequestAgent>();
+builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
+{
+    var encoded = builder.Configuration["ServiceAuthorisation:Key"] ?? Environment.GetEnvironmentVariable("SERVICE_ACTION_AUTHORISATION_KEY");
+    if (!string.IsNullOrWhiteSpace(encoded)) return new HmacServiceActionAuthorisationService(Convert.FromBase64String(encoded));
+    if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("SERVICE_ACTION_AUTHORISATION_KEY is required outside Development/Testing.");
+    return new HmacServiceActionAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+});
+builder.Services.AddScoped<IServiceConnector, DemoHotelConnector>();
+builder.Services.AddScoped<IServiceConnector, DemoRestaurantConnector>();
+builder.Services.AddScoped<IServiceConnector, DemoTaxiConnector>();
+builder.Services.AddScoped<ServiceConnectorRegistry>();
+builder.Services.AddScoped<IServiceDomainCapability, HotelDomainCapability>();
+builder.Services.AddScoped<IServiceDomainCapability, RestaurantDomainCapability>();
+builder.Services.AddScoped<IServiceDomainCapability, TaxiDomainCapability>();
+builder.Services.AddScoped<ServicePlanningRouter>();
+builder.Services.AddHostedService<HotelBookingRecoveryWorker>();
 builder.Services.AddScoped<MandateLimitChangeService>();
 
-var consumerMemoryEnabled=builder.Configuration.GetValue("ConsumerMemory:Enabled",false);
-if(consumerMemoryEnabled)
+var consumerMemoryEnabled = builder.Configuration.GetValue("ConsumerMemory:Enabled", false);
+if (consumerMemoryEnabled)
 {
-    if(connectionString is null)throw new InvalidOperationException("Consumer semantic memory requires the SQL system of record.");
-    var qdrantUrl=builder.Configuration["ConsumerMemory:Qdrant:Url"]??throw new InvalidOperationException("ConsumerMemory:Qdrant:Url is required.");
-    var redisConnection=builder.Configuration["ConsumerMemory:Redis:ConnectionString"]??throw new InvalidOperationException("ConsumerMemory:Redis:ConnectionString is required.");
-    var embeddingModel=builder.Configuration["ConsumerMemory:Embedding:Model"]??"text-embedding-3-small";var embeddingDimensions=builder.Configuration.GetValue("ConsumerMemory:Embedding:Dimensions",1536);
-    var embeddingEndpoint=builder.Configuration["ConsumerMemory:Embedding:Endpoint"]??"https://api.openai.com/v1/";var embeddingKey=builder.Configuration["OpenAI:ApiKey"]??Environment.GetEnvironmentVariable("OPENAI_API_KEY")??throw new InvalidOperationException("OPENAI_API_KEY is required for consumer semantic memory.");
-    builder.Services.AddStackExchangeRedisCache(options=>options.Configuration=redisConnection);
-    builder.Services.AddHttpClient("consumer-memory-embeddings",client=>{client.BaseAddress=new Uri(embeddingEndpoint);client.Timeout=TimeSpan.FromSeconds(30);});
-    builder.Services.AddHttpClient<IConsumerMemoryVectorIndex,QdrantConsumerMemoryVectorIndex>(client=>{client.BaseAddress=new Uri(qdrantUrl.TrimEnd('/')+"/");client.Timeout=TimeSpan.FromSeconds(15);});
-    builder.Services.AddScoped<IConsumerMemoryEmbeddingService>(sp=>new ConsumerEmbeddingAdapter(new OpenAiTextEmbeddingService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("consumer-memory-embeddings"),embeddingKey,embeddingModel,embeddingDimensions)));
-    builder.Services.AddScoped<IConsumerMemoryCache,RedisConsumerMemoryCache>();builder.Services.AddScoped<IConsumerMemoryRetriever>(sp=>new SemanticConsumerMemoryRetriever(sp.GetRequiredService<IConsumerMemoryStore>(),sp.GetRequiredService<IConsumerMemoryEmbeddingService>(),sp.GetRequiredService<IConsumerMemoryVectorIndex>(),sp.GetRequiredService<IConsumerMemoryCache>(),TimeSpan.FromSeconds(Math.Clamp(builder.Configuration.GetValue("ConsumerMemory:Redis:CacheTtlSeconds",120),10,3600))));
-    builder.Services.AddScoped<IConsumerMemoryOutboxStore,EfConsumerMemoryOutboxStore>();builder.Services.AddHostedService<ConsumerMemoryIndexWorker>();
+    if (connectionString is null) throw new InvalidOperationException("Consumer semantic memory requires the SQL system of record.");
+    var qdrantUrl = builder.Configuration["ConsumerMemory:Qdrant:Url"] ?? throw new InvalidOperationException("ConsumerMemory:Qdrant:Url is required.");
+    var redisConnection = builder.Configuration["ConsumerMemory:Redis:ConnectionString"] ?? throw new InvalidOperationException("ConsumerMemory:Redis:ConnectionString is required.");
+    var embeddingModel = builder.Configuration["ConsumerMemory:Embedding:Model"] ?? "text-embedding-3-small"; var embeddingDimensions = builder.Configuration.GetValue("ConsumerMemory:Embedding:Dimensions", 1536);
+    var embeddingEndpoint = builder.Configuration["ConsumerMemory:Embedding:Endpoint"] ?? "https://api.openai.com/v1/"; var embeddingKey = builder.Configuration["OpenAI:ApiKey"] ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is required for consumer semantic memory.");
+    builder.Services.AddStackExchangeRedisCache(options => options.Configuration = redisConnection);
+    builder.Services.AddHttpClient("consumer-memory-embeddings", client => { client.BaseAddress = new Uri(embeddingEndpoint); client.Timeout = TimeSpan.FromSeconds(30); });
+    builder.Services.AddHttpClient<IConsumerMemoryVectorIndex, QdrantConsumerMemoryVectorIndex>(client => { client.BaseAddress = new Uri(qdrantUrl.TrimEnd('/') + "/"); client.Timeout = TimeSpan.FromSeconds(15); });
+    builder.Services.AddScoped<IConsumerMemoryEmbeddingService>(sp => new ConsumerEmbeddingAdapter(new OpenAiTextEmbeddingService(sp.GetRequiredService<IHttpClientFactory>().CreateClient("consumer-memory-embeddings"), embeddingKey, embeddingModel, embeddingDimensions)));
+    builder.Services.AddScoped<IConsumerMemoryCache, RedisConsumerMemoryCache>(); builder.Services.AddScoped<IConsumerMemoryRetriever>(sp => new SemanticConsumerMemoryRetriever(sp.GetRequiredService<IConsumerMemoryStore>(), sp.GetRequiredService<IConsumerMemoryEmbeddingService>(), sp.GetRequiredService<IConsumerMemoryVectorIndex>(), sp.GetRequiredService<IConsumerMemoryCache>(), TimeSpan.FromSeconds(Math.Clamp(builder.Configuration.GetValue("ConsumerMemory:Redis:CacheTtlSeconds", 120), 10, 3600))));
+    builder.Services.AddScoped<IConsumerMemoryOutboxStore, EfConsumerMemoryOutboxStore>(); builder.Services.AddHostedService<ConsumerMemoryIndexWorker>();
 }
 
 // Financial Intelligence layer (AgentTrust.Intelligence). ITransactionEventStore and

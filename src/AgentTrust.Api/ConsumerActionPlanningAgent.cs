@@ -11,12 +11,21 @@ public sealed record ConsumerActionPlanningContext(
     string ProviderName,
     IReadOnlySet<string> AvailableCapabilities);
 
+/// <summary>Resolves a provider and its advertised operations. It contains no domain reasoning.</summary>
 public interface IProviderPlanningCapability
 {
-    string ProviderId { get; }
-    IReadOnlySet<string> Capabilities { get; }
     bool CanHandle(ConsumerActionPlanningContext context);
-    Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context, CancellationToken cancellationToken);
+    ProviderPlanningSession Open(ConsumerActionPlanningContext context);
+}
+
+public sealed record ProviderPlanningSession(string ProviderId,string ProviderName,IReadOnlySet<string> Capabilities,object Provider);
+
+/// <summary>Reusable reasoning semantics, selected independently of the provider.</summary>
+public interface IDomainPlanningCapability
+{
+    string DomainId { get; }
+    bool CanHandle(ConsumerActionPlanningContext context,ProviderPlanningSession provider);
+    Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context,ProviderPlanningSession provider,CancellationToken cancellationToken);
 }
 
 public interface IConsumerPurchaseRequestAgent
@@ -30,10 +39,11 @@ public interface IConsumerPurchaseRequestAgent
 /// </summary>
 public sealed class ConsumerPurchaseRequestAgent : IConsumerPurchaseRequestAgent
 {
-    private readonly IReadOnlyList<IProviderPlanningCapability> _capabilities;
+    private readonly IReadOnlyList<IProviderPlanningCapability> _providers;
+    private readonly IReadOnlyList<IDomainPlanningCapability> _domains;
 
-    public ConsumerPurchaseRequestAgent(IEnumerable<IProviderPlanningCapability> capabilities) =>
-        _capabilities = capabilities.ToArray();
+    public ConsumerPurchaseRequestAgent(IEnumerable<IProviderPlanningCapability> providers,IEnumerable<IDomainPlanningCapability> domains)
+    { _providers=providers.ToArray();_domains=domains.ToArray(); }
 
     public Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context, CancellationToken cancellationToken)
     {
@@ -41,42 +51,36 @@ public sealed class ConsumerPurchaseRequestAgent : IConsumerPurchaseRequestAgent
         if (string.IsNullOrWhiteSpace(context.Instruction))
             throw new ArgumentException("A consumer instruction is required.", nameof(context));
 
-        var capability = _capabilities.FirstOrDefault(candidate => candidate.CanHandle(context));
-        if (capability is null)
-            throw new InvalidOperationException($"Provider '{context.ProviderId}' has no registered planning capability for this objective.");
-
-        return capability.PlanAsync(context, cancellationToken);
+        var resolver=_providers.FirstOrDefault(candidate=>candidate.CanHandle(context))
+            ??throw new InvalidOperationException($"Provider '{context.ProviderId}' is not registered.");
+        var provider=resolver.Open(context);
+        var domain=_domains.FirstOrDefault(candidate=>candidate.CanHandle(context,provider))
+            ??throw new InvalidOperationException($"No domain reasoner supports provider '{context.ProviderId}' and its capabilities.");
+        return domain.PlanAsync(context,provider,cancellationToken);
     }
 }
 
-/// <summary>Grocery-specific adapter. Catalogue access and meal semantics stay behind this capability.</summary>
-public sealed class GroceryProviderPlanningCapability : IProviderPlanningCapability
+/// <summary>Generic connector adapter. It routes providers but contains no grocery semantics.</summary>
+public sealed class CommerceConnectorPlanningCapability : IProviderPlanningCapability
 {
-    private static readonly IReadOnlySet<string> RequiredCapabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        "search_products", "get_quote"
-    };
-
     private readonly MerchantConnectorRegistry _connectors;
+    public CommerceConnectorPlanningCapability(MerchantConnectorRegistry connectors)=>_connectors=connectors;
+    public bool CanHandle(ConsumerActionPlanningContext context)=>_connectors.TryGet(context.ProviderId,out _);
+    public ProviderPlanningSession Open(ConsumerActionPlanningContext context)
+    {var connector=_connectors.GetRequired(context.ProviderId);return new(connector.MerchantId,connector.MerchantName,CommerceCapabilityCatalog.Describe(connector),connector);}
+}
+
+/// <summary>Shared grocery semantics usable by Tesco, Sainsbury's, or any compatible provider.</summary>
+public sealed class GroceryDomainPlanningCapability:IDomainPlanningCapability
+{
     private readonly GroceryConsumerPurchasePlanner _planner;
-
-    public GroceryProviderPlanningCapability(MerchantConnectorRegistry connectors, GroceryConsumerPurchasePlanner planner)
+    public GroceryDomainPlanningCapability(GroceryConsumerPurchasePlanner planner)=>_planner=planner;
+    public string DomainId=>"grocery";
+    public bool CanHandle(ConsumerActionPlanningContext context,ProviderPlanningSession provider)=>
+        provider.Provider is IProductSearchCapability&&provider.Capabilities.Contains("search_products")&&provider.Capabilities.Contains("get_quote");
+    public async Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context,ProviderPlanningSession provider,CancellationToken cancellationToken)
     {
-        _connectors = connectors;
-        _planner = planner;
-    }
-
-    public string ProviderId => "grocery";
-    public IReadOnlySet<string> Capabilities => RequiredCapabilities;
-
-    public bool CanHandle(ConsumerActionPlanningContext context) =>
-        _connectors.TryGet(context.ProviderId, out _) &&
-        RequiredCapabilities.All(required => context.AvailableCapabilities.Contains(required));
-
-    public async Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context, CancellationToken cancellationToken)
-    {
-        var connector = _connectors.GetRequired(context.ProviderId);
-        var catalogue = await connector.SearchProductsAsync(string.Empty, cancellationToken);
+        var catalogue=await ((IProductSearchCapability)provider.Provider).SearchProductsAsync(string.Empty,cancellationToken);
         return await _planner.PlanAsync(context.PrincipalId, context.ConversationId, context.Instruction, catalogue, cancellationToken);
     }
 }
