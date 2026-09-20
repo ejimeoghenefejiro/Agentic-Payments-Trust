@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentTrust.Commerce;
@@ -32,12 +33,12 @@ public sealed class ConsumerController : ControllerBase
     private readonly IAgentRegistry _agents;private readonly IPrincipalBindingStore _bindings;private readonly IPrincipalStore _principals;
     private readonly IConsumerPurchaseRequestAgent _requestAgent;private readonly IConfiguration _configuration;
     private readonly IConsumerPlanningStore _planning;private readonly IConsumerMemoryService _memory;private readonly MandateLimitChangeService _limitChanges;private readonly IMandateLimitChangeStore _limitChangeStore;private readonly IAuthorizationService _authorization;
-    private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;
+    private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ICustomerRequestUnderstandingAgent _understanding;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, MerchantConnectorRegistry connectors,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray(); }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -136,7 +137,31 @@ public sealed class ConsumerController : ControllerBase
             return Ok(new{interactionDecision="REQUIRES_STEP_UP",message=$"Changing your {limitKind} spending limit changes the agent's financial authority. Confirm the prepared £{newLimit:0.00} {limitKind} limit using secure verification.",paymentAttempted=false,trustBoundaryInvoked=false,proposal,confirmEndpoint=$"/api/consumer/mandates/{current.MandateId}/limit-change-proposals/{proposal.ProposalId}/confirm"});
         }
         var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
-        var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");var managedConversationId=startsNew?null:_planning.FindLatestOpen(principal,now.AddMinutes(-30))?.ConversationId;
+        var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");
+        var latestConversation=_planning.FindLatestOpen(principal,now.AddMinutes(-30));
+        var understanding=await _understanding.UnderstandAsync(instruction,latestConversation?.Objective,CommerceCapabilityCatalog.Describe(_connector),token);
+        var hasExplicitBudget=understanding.ExplicitBudget is not null;
+        var explicitContinuation=latestConversation is not null&&(understanding.ContinuesOpenProposal||PurchaseRequestBudgetGate.IsExplicitContinuation(instruction));
+        if(!hasExplicitBudget&&!explicitContinuation)
+        {
+            ObjectiveClarification? suggestion=null;
+            foreach(var capability in _objectiveCapabilities)
+                if(await capability.ClarifyAsync(instruction,token) is { } candidate){suggestion=candidate;break;}
+            var planning=PurchaseRequestBudgetGate.Clarification(suggestion);
+            var state=new ConsumerPlanningState(instruction,new(),[],[planning.Questions[0]],[],[],planning.ToolsUsed.ToList(),planning.Status,planning);
+            var conversation=_planning.Create(principal,instruction,JsonSerializer.Serialize(state),now);
+            planning=planning with{ConversationId=conversation.ConversationId};
+            state=state with{LatestPlan=planning};
+            _planning.Save(conversation with{Status=PurchasePlanningStatus.NeedsInput,StateJson=JsonSerializer.Serialize(state),UpdatedAt=now,Version=conversation.Version+1});
+            _planning.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,1,"user","message",instruction,null,null,null,now));
+            _planning.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,2,"assistant","clarification",planning.Message,null,null,null,now));
+            return Ok(new{instruction,understanding,planning,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
+        }
+        var resumesOpenConversation=latestConversation is not null&&(
+            PurchaseRequestBudgetGate.RefersToOpenProposal(instruction)
+            ||PurchaseRequestBudgetGate.IsBudgetOnlyAnswer(instruction)
+            ||!hasExplicitBudget&&explicitContinuation);
+        var managedConversationId=!startsNew&&resumesOpenConversation?latestConversation?.ConversationId:null;
         var planningContext=new ConsumerActionPlanningContext(principal,managedConversationId,instruction,_connector.MerchantId,_connector.MerchantName,
             CommerceCapabilityCatalog.Describe(_connector));
         ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(planningContext,token);}catch(UnauthorizedAccessException){return NotFound();}

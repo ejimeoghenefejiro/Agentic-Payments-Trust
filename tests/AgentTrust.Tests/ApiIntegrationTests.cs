@@ -34,6 +34,68 @@ namespace AgentTrust.Tests;
 public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
     [Fact]
+    public void CustomerUnderstanding_ExtractsGenericConstraintsWithoutMealTemplates()
+    {
+        var result=AgentTrust.Api.CustomerRequestUnderstandingFallback.Parse(
+            "Please arrange something for 3 people under £24.50. I have no allergies and already have rice. Go ahead.",null);
+        Assert.Equal(3,result.People);Assert.Equal(24.50m,result.ExplicitBudget);Assert.Equal("NONE",result.AllergyStatus);
+        Assert.Contains("rice",result.InventoryAtHome);Assert.True(result.RequestsExecution);Assert.Empty(result.MissingInformation);
+    }
+    [Theory]
+    [InlineData("Buy enough groceries for dinner 1 person on a tight budget")]
+    [InlineData("uy enough groceries for dinner 1 person on a tight budget")]
+    [InlineData("Buy dinner for four people")]
+    public void BudgetGate_RejectsAHeadcountAsFinancialAuthority(string instruction)
+    {
+        Assert.False(AgentTrust.Api.PurchaseRequestBudgetGate.HasExplicitBudget(instruction));
+        Assert.False(AgentTrust.Api.PurchaseRequestBudgetGate.IsExplicitContinuation(instruction));
+        var response=AgentTrust.Api.PurchaseRequestBudgetGate.Clarification();
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,response.Status);
+        Assert.Equal(0m,response.MaximumAmount);
+        var question=Assert.Single(response.Questions);
+        Assert.Contains("maximum budget",question,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("allergies",question,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("go ahead",question,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("Buy dinner for one person within £20")]
+    [InlineData("My budget is 20 GBP")]
+    [InlineData("Do not spend more than 20 pounds")]
+    public void BudgetGate_AcceptsAnExplicitMonetaryLimit(string instruction) =>
+        Assert.True(AgentTrust.Api.PurchaseRequestBudgetGate.HasExplicitBudget(instruction));
+
+    [Theory]
+    [InlineData("Yes, use that suggestion")]
+    [InlineData("Proceed with that basket")]
+    [InlineData("£20")]
+    [InlineData("I already have chicken and tomatoes")]
+    [InlineData("Use your best judgement and proceed")]
+    public void BudgetGate_RecognisesAnExplicitFollowUp(string instruction) =>
+        Assert.True(AgentTrust.Api.PurchaseRequestBudgetGate.IsExplicitContinuation(instruction));
+
+    [Fact]
+    public void BudgetGate_DistinguishesProposalReferenceFromANewCompleteRequest()
+    {
+        Assert.True(AgentTrust.Api.PurchaseRequestBudgetGate.RefersToOpenProposal(
+            "My maximum budget is £20. I have no allergies. Go ahead with the suggested meal."));
+        Assert.False(AgentTrust.Api.PurchaseRequestBudgetGate.RefersToOpenProposal(
+            "Buy chicken wraps within £20. Use your best judgement and proceed."));
+    }
+
+    [Fact]
+    public async Task BudgetGate_UsesTheGroceryDomainSuggestionForAnAmbiguousDinner()
+    {
+        var capability=new AgentTrust.Connectors.GroceryMealObjectiveCapability();
+        var suggestion=await capability.ClarifyAsync("Buy enough groceries for dinner for one person on a tight budget");
+        var response=AgentTrust.Api.PurchaseRequestBudgetGate.Clarification(suggestion);
+
+        Assert.Contains("chicken, rice, lettuce and tomato",response.Message,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("grocery-dinner-clarification:v1",response.ToolsUsed);
+        Assert.Equal(AgentTrust.Api.PurchaseInteractionDecision.Clarify,response.InteractionDecision);
+    }
+
+    [Fact]
     public void PurchasePlanGuard_RejectsMalformedItemsAndOptionalCheeseFailure()
     {
         var malformed=new AgentTrust.Api.ConsumerPurchasePlan(AgentTrust.Api.PurchasePlanningStatus.Impossible,"Wraps","Cheese is unavailable",20,"GBP",[new(null!,0)],[],8.75m,[]);
@@ -63,6 +125,29 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var essential=document.RootElement.GetProperty("essential").EnumerateArray().Select(x=>x.GetString()!).ToArray();
         Assert.Equal(["chicken","wraps","lettuce","tomato","sauce"],essential);
         Assert.Contains("expand_objective",plugin.ToolsUsed);
+    }
+    [Fact]
+    public async Task GroceryDomain_ExpandsAValueDinnerObjectiveWithoutInventingProducts()
+    {
+        var capability=new AgentTrust.Connectors.GroceryMealObjectiveCapability();
+        Assert.False(capability.CanExpand("Buy enough groceries for dinner and choose good value"));
+        Assert.True(capability.CanExpand("Buy enough groceries for dinner. Use your best judgement"));
+        Assert.True(capability.CanExpand("Buy enough groceries for dinner. Go ahead with the suggested meal"));
+        var expansion=await capability.ExpandAsync("Buy enough groceries for dinner. Use your best judgement");
+        Assert.NotNull(expansion);
+        Assert.Equal(["chicken","rice","lettuce","tomato"],expansion.RequiredConcepts);
+        Assert.Equal("grocery-dinner-capability:v1",expansion.Provenance);
+    }
+    [Fact]
+    public async Task GroceryDomain_ClarifiesAnAmbiguousDinnerWithoutGenericMealKnowledge()
+    {
+        var capability=new AgentTrust.Connectors.GroceryMealObjectiveCapability();
+        var clarification=await capability.ClarifyAsync("I have £20. Buy enough groceries for dinner.");
+        Assert.NotNull(clarification);Assert.False(string.IsNullOrWhiteSpace(clarification.Question));
+        Assert.Equal(["chicken","rice","lettuce","tomato"],clarification.SuggestedConcepts);
+        Assert.Equal("grocery-dinner-clarification:v1",clarification.Provenance);
+        Assert.Null(await capability.ClarifyAsync("I have £20. Buy groceries for dinner. Use your best judgement"));
+        Assert.Null(await capability.ClarifyAsync("I have £20. Buy groceries for dinner. Go ahead with the suggested meal"));
     }
     [Fact]
     public async Task PurchasePlanningPlugin_StopsAfterCompleteMerchantPricedBasket()
@@ -155,6 +240,24 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(catalogue.Select(x=>x.ProductId).Order(),plan.Items.Select(x=>x.SearchTerm).Order());Assert.Contains("search_catalogue_batch",plan.ToolsUsed);Assert.Contains("price_basket",plan.ToolsUsed);
         Assert.False(AgentTrust.Api.PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out _));
     }
+    [Fact]
+    public void ExplicitDinnerList_IsGroundedWithoutDependingOnModelAvailability()
+    {
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("chicken-breast-500g","Chicken breast 500g",4.75m,"GBP",10,new HashSet<string>{"chicken","chicken breast"}),
+            new("rice-1kg","Long grain rice",8.50m,"GBP",10,new HashSet<string>{"rice"}),
+            new("lettuce-iceberg","Iceberg lettuce",.95m,"GBP",10,new HashSet<string>{"lettuce"}),
+            new("tomatoes-6","Salad tomatoes",1.25m,"GBP",10,new HashSet<string>{"tomatoes"})
+        ];
+        var instruction="I have a budget of £20. Please buy enough chicken breast, rice, lettuce, and tomatoes to make dinner for one person.";
+
+        Assert.True(AgentTrust.Api.PurchasePlanGuard.TryBuildExplicitProductListPlan(instruction,catalogue,out var plan));
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.Ready,plan.Status);
+        Assert.Equal(17.95m,plan.EstimatedTotal);
+        Assert.Equal(4,plan.Items.Count);
+        Assert.Contains("price_basket",plan.ToolsUsed);
+    }
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;
 
@@ -181,6 +284,19 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     {
         var response = await _client.GetAsync("/api/consumer/tasks");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VersionEndpointIdentifiesTheRunningBinaryWithoutAuthentication()
+    {
+        var response = await _client.GetAsync("/health/version");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var version = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("AgentTrust.Api", version.GetProperty("application").GetString());
+        Assert.Equal("Testing", version.GetProperty("environment").GetString());
+        Assert.Matches("^[0-9A-F]{64}$", version.GetProperty("binarySha256").GetString()!);
+        Assert.True(Guid.TryParse(version.GetProperty("moduleVersionId").GetString(), out _));
     }
 
     [Fact]

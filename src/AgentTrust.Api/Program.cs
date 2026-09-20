@@ -36,7 +36,7 @@ var dataProtection = builder.Services.AddDataProtection().SetApplicationName("Ag
 if (!string.IsNullOrWhiteSpace(dataProtectionPath)) dataProtection.PersistKeysToFileSystem(Directory.CreateDirectory(dataProtectionPath));
 var dataProtectionCertificate = builder.Configuration["DataProtection:CertificateThumbprint"] ?? Environment.GetEnvironmentVariable("DATA_PROTECTION_CERTIFICATE_THUMBPRINT");
 if (!string.IsNullOrWhiteSpace(dataProtectionCertificate)) { using var certificateStore = new X509Store(StoreName.My, StoreLocation.CurrentUser); certificateStore.Open(OpenFlags.ReadOnly); var certificate = certificateStore.Certificates.Find(X509FindType.FindByThumbprint, dataProtectionCertificate, false).OfType<X509Certificate2>().SingleOrDefault() ?? throw new InvalidOperationException("The configured Data Protection certificate was not found."); dataProtection.ProtectKeysWithCertificate(certificate); }
-else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")) throw new InvalidOperationException("DATA_PROTECTION_CERTIFICATE_THUMBPRINT is required outside Development/Testing.");
+else if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing") && !builder.Environment.IsEnvironment("E2E")) throw new InvalidOperationException("DATA_PROTECTION_CERTIFICATE_THUMBPRINT is required outside Development/Testing/E2E.");
 
 builder.Services.AddControllers(options => options.InputFormatters.Insert(0, new TextPlainInputFormatter()));
 builder.Services.AddProblemDetails();
@@ -77,10 +77,11 @@ builder.Services.AddSwaggerGen(options =>
 });
 var authority = builder.Configuration["Authentication:Authority"];
 var audience = builder.Configuration["Authentication:Audience"];
-var developmentTokens = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Authentication:Development:Enabled", false);
-if (!builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Authentication:Development:Enabled", false))
-    throw new InvalidOperationException("Development token authentication cannot run outside Development.");
-if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing")
+var localTestEnvironment = builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("E2E");
+var developmentTokens = localTestEnvironment && builder.Configuration.GetValue("Authentication:Development:Enabled", false);
+if (!localTestEnvironment && builder.Configuration.GetValue("Authentication:Development:Enabled", false))
+    throw new InvalidOperationException("Local token authentication can run only in Development or E2E.");
+if (!localTestEnvironment && !builder.Environment.IsEnvironment("Testing")
     && (string.IsNullOrWhiteSpace(authority) || string.IsNullOrWhiteSpace(audience)))
     throw new InvalidOperationException("Authentication:Authority and Authentication:Audience are required outside Development/Testing.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
@@ -281,6 +282,7 @@ builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
 builder.Services.AddScoped<IProviderPlanningCapability, CommerceConnectorPlanningCapability>();
 builder.Services.AddScoped<IDomainPlanningCapability, GroceryDomainPlanningCapability>();
 builder.Services.AddScoped<IConsumerPurchaseRequestAgent, ConsumerPurchaseRequestAgent>();
+builder.Services.AddScoped<ICustomerRequestUnderstandingAgent, SemanticKernelCustomerRequestUnderstandingAgent>();
 builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
 {
     var encoded = builder.Configuration["ServiceAuthorisation:Key"] ?? Environment.GetEnvironmentVariable("SERVICE_ACTION_AUTHORISATION_KEY");

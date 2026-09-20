@@ -130,14 +130,17 @@ public sealed class GroceryConsumerPurchasePlanner
         LearnConstraints(state.Constraints,instruction);conversation??=_store.Create(principal,instruction,JsonSerializer.Serialize(state),now);_memory?.CaptureCorrections(principal,instruction,conversation.ConversationId);
         foreach(var constraint in state.Constraints)_store.Remember(principal,constraint.Key,constraint.Value,conversation.ConversationId,now);
         var sequence=_store.Turns(conversation.ConversationId).Count+1;_store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence++,"user","message",instruction,null,null,null,now));
-        ConsumerPurchasePlan? plan=null;
-        if(AgentFactory.IsLiveModeConfigured)
+        var completeInstruction=string.Join("\n",new[]{state.Objective,instruction});
+        ConsumerPurchasePlan? plan=await BuildDomainClarification(completeInstruction,catalogue,token);
+        if(plan is null&&PurchasePlanGuard.TryBuildExplicitProductListPlan(completeInstruction,catalogue,out var explicitPlan)
+            &&explicitPlan.Status==PurchasePlanningStatus.Ready)
+            plan=explicitPlan;
+        if(plan is null&&AgentFactory.IsLiveModeConfigured)
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(_planningTimeoutSeconds));
             try{plan=await AskModel(state,instruction,catalogue,timeout.Token);}
             catch(Exception ex) when(ex is not OperationCanceledException||!token.IsCancellationRequested){plan=null;}
         }
-        var completeInstruction=string.Join("\n",new[]{state.Objective,instruction});
         plan??=_allowDeterministicFallback||SupportsObjective(completeInstruction)?await Fallback(completeInstruction,catalogue,token):Unavailable(instruction);
         plan=PurchasePlanGuard.Normalize(plan);
         if(PurchasePlanGuard.TryReplaceUnsupportedDeliveryConclusion(completeInstruction,catalogue,plan,out var deliveryCorrectedPlan))
@@ -181,6 +184,27 @@ public sealed class GroceryConsumerPurchasePlanner
         _store.Save(conversation with{Status=conversationStatus,StateJson=JsonSerializer.Serialize(state),UpdatedAt=DateTimeOffset.UtcNow,Version=conversation.Version+1});
         if(plan.Status==PurchasePlanningStatus.Ready)Reserve(conversation.ConversationId,plan,catalogue,DateTimeOffset.UtcNow);
         return plan;
+    }
+
+    private async Task<ConsumerPurchasePlan?> BuildDomainClarification(string instruction,IReadOnlyList<Product> catalogue,CancellationToken token)
+    {
+        foreach(var capability in _objectiveCapabilities)
+        {
+            var clarification=await capability.ClarifyAsync(instruction,token);
+            if(clarification is null)continue;
+            var budget=ExtractBudget(instruction);var tools=new PurchasePlanningPlugin(catalogue,_maximumToolCalls);
+            tools.SearchMany(JsonSerializer.Serialize(clarification.SuggestedConcepts));
+            var items=clarification.SuggestedConcepts.Select(x=>new PlannedPurchaseItem(x,1)).ToArray();
+            using var priced=JsonDocument.Parse(tools.Price(JsonSerializer.Serialize(items)));
+            var valid=priced.RootElement.TryGetProperty("valid",out var validElement)&&validElement.GetBoolean();
+            var total=valid?priced.RootElement.GetProperty("total").GetDecimal():(decimal?)null;
+            var suggestion=total is not null&&total<=budget
+                ?$" A provider-priced example is about £{total:0.00}, including delivery."
+                :" I can search for a complete option within your budget.";
+            return new(PurchasePlanningStatus.NeedsInput,clarification.Summary,clarification.Message+suggestion,budget,"GBP",[],
+                [clarification.Question],total,tools.ToolsUsed.Append(clarification.Provenance).ToArray());
+        }
+        return null;
     }
 
     private async Task<ConsumerPurchasePlan?> AskModel(ConsumerPlanningState state,string instruction,IReadOnlyList<Product> catalogue,CancellationToken token)
@@ -285,10 +309,10 @@ public sealed class GroceryConsumerPurchasePlanner
     private async Task<ConsumerPurchasePlan> Fallback(string instruction,IReadOnlyList<Product> catalogue,CancellationToken token)
     {
         if(PurchasePlanGuard.TryBuildExplicitProductListPlan(instruction,catalogue,out var listedPurchase))return listedPurchase;
-        if(PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out var directPurchase))return directPurchase;
         var match=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var budget=match.Success?decimal.Parse(match.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture):0;
         var capability=_objectiveCapabilities.FirstOrDefault(x=>x.CanExpand(instruction));var expansion=capability is null?null:await capability.ExpandAsync(instruction,token);
+        if(expansion is null&&PurchasePlanGuard.TryBuildSingleProductPlan(instruction,catalogue,out var directPurchase))return directPurchase;
         if(expansion is null||budget<=0)
             return new(PurchasePlanningStatus.NeedsInput,"Planning requires clarification","The live planning model is unavailable and no safe verified plan was produced.",Math.Max(budget,0.01m),"GBP",[],["Please restate the meal and maximum budget."],null,[]);
         var inventory=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:already have|I have)\s+([a-z ,and]+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase).Groups[1].Value;var needed=expansion.RequiredConcepts.Where(x=>!inventory.Contains(x,StringComparison.OrdinalIgnoreCase)).ToArray();var items=needed.Select(x=>new PlannedPurchaseItem(x,1)).ToArray();var tools=new PurchasePlanningPlugin(catalogue,DefaultMaximumToolCalls);tools.SearchMany(JsonSerializer.Serialize(needed));var priced=tools.Price(JsonSerializer.Serialize(items));var total=JsonDocument.Parse(priced).RootElement.GetProperty("total").GetDecimal();

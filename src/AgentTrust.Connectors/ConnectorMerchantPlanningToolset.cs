@@ -46,7 +46,34 @@ public sealed class ConnectorMerchantPlanningToolset:IMerchantPlanningToolset
 public sealed class GroceryMealObjectiveCapability:IObjectiveExpansionCapability
 {
     public string CapabilityName=>"meal_planning";
-    public bool CanExpand(string objective)=>objective.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase);
-    public Task<ObjectiveExpansion?> ExpandAsync(string objective,CancellationToken cancellationToken=default)=>Task.FromResult<ObjectiveExpansion?>(
-        new(objective,["chicken","wraps","lettuce","tomato","sauce"],["cheese","onion","pepper"],"grocery-meal-capability:v1"));
+    public bool CanExpand(string objective)=>objective.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)
+        ||((objective.Contains("groceries for dinner",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("food for dinner",StringComparison.OrdinalIgnoreCase))
+            &&(objective.Contains("use your best judgement",StringComparison.OrdinalIgnoreCase)
+                ||objective.Contains("go ahead with the suggested meal",StringComparison.OrdinalIgnoreCase)
+                ||objective.Contains("use the suggested meal",StringComparison.OrdinalIgnoreCase)));
+    public Task<ObjectiveExpansion?> ExpandAsync(string objective,CancellationToken cancellationToken=default)
+    {
+        var dinner=objective.Contains("groceries for dinner",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("food for dinner",StringComparison.OrdinalIgnoreCase);
+        return Task.FromResult<ObjectiveExpansion?>(dinner
+            ?new(objective,["chicken","rice","lettuce","tomato"],["sauce"],"grocery-dinner-capability:v1")
+            :new(objective,["chicken","wraps","lettuce","tomato","sauce"],["cheese","onion","pepper"],"grocery-meal-capability:v1"));
+    }
+    public Task<ObjectiveClarification?> ClarifyAsync(string objective,CancellationToken cancellationToken=default)
+    {
+        var dinner=(objective.Contains("groceries",StringComparison.OrdinalIgnoreCase)
+                ||objective.Contains("food",StringComparison.OrdinalIgnoreCase))
+            &&objective.Contains("dinner",StringComparison.OrdinalIgnoreCase);
+        var delegated=objective.Contains("use your best judgement",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("choose for me",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("surprise me",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("go ahead with the suggested meal",StringComparison.OrdinalIgnoreCase)
+            ||objective.Contains("use the suggested meal",StringComparison.OrdinalIgnoreCase);
+        return Task.FromResult<ObjectiveClarification?>(dinner&&!delegated
+            ?new("Dinner choice needed","I can help choose a complete dinner.",
+                "Would you like the suggested chicken-and-rice meal, a vegetarian meal, or something else?",
+                ["chicken","rice","lettuce","tomato"],"grocery-dinner-clarification:v1")
+            :null);
+    }
 }

@@ -24,7 +24,7 @@ public sealed class DevelopmentTokenController(
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Issue(DevelopmentTokenRequest request)
     {
-        if(!environment.IsDevelopment()||!configuration.GetValue("Authentication:Development:Enabled",false))return NotFound();
+        if(!(environment.IsDevelopment()||environment.IsEnvironment("E2E"))||!configuration.GetValue("Authentication:Development:Enabled",false))return NotFound();
         if(string.IsNullOrWhiteSpace(request.Subject)||string.IsNullOrWhiteSpace(request.Password))
             return BadRequest("Subject and password are required.");
         var key=configuration["Authentication:Development:SigningKey"]??throw new InvalidOperationException("Development signing key missing.");
@@ -67,7 +67,7 @@ public sealed class DevelopmentUsersController(
         DevelopmentUserRequest request,
         CancellationToken cancellationToken)
     {
-        if (!environment.IsDevelopment()
+        if (!(environment.IsDevelopment() || environment.IsEnvironment("E2E"))
             || !configuration.GetValue("Authentication:Development:Enabled", false))
             return NotFound();
 

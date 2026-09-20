@@ -50,11 +50,15 @@ public sealed record MerchantPlanningQuote(string QuoteId,string MerchantId,stri
     IReadOnlyList<BasketItem> Items,decimal Subtotal,decimal DeliveryFee,decimal ServiceFee,decimal Discount,
     decimal Tax,decimal Total,DateTimeOffset ExpiresAt,string DeliveryOptionId);
 public sealed record ObjectiveExpansion(string Objective,IReadOnlyList<string> RequiredConcepts,IReadOnlyList<string> OptionalConcepts,string Provenance);
+public sealed record ObjectiveClarification(string Summary,string Message,string Question,
+    IReadOnlyList<string> SuggestedConcepts,string Provenance);
 public interface IObjectiveExpansionCapability
 {
     string CapabilityName { get; }
     bool CanExpand(string objective);
     Task<ObjectiveExpansion?> ExpandAsync(string objective,CancellationToken cancellationToken=default);
+    Task<ObjectiveClarification?> ClarifyAsync(string objective,CancellationToken cancellationToken=default) =>
+        Task.FromResult<ObjectiveClarification?>(null);
 }
 public interface IMerchantPlanningToolset
 {
