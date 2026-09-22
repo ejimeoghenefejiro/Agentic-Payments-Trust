@@ -31,14 +31,14 @@ public sealed class ConsumerController : ControllerBase
     private readonly IMandateStore _mandates; private readonly ICommerceDurability _durability; private readonly IPurchaseAuditSink _audit;
     private readonly IScheduledOccurrenceStore _occurrences;
     private readonly IAgentRegistry _agents;private readonly IPrincipalBindingStore _bindings;private readonly IPrincipalStore _principals;
-    private readonly IConsumerPurchaseRequestAgent _requestAgent;private readonly IConfiguration _configuration;
+    private readonly ConsumerCommerceAgent _commerceAgent;private readonly IConfiguration _configuration;
     private readonly IConsumerPlanningStore _planning;private readonly IConsumerMemoryService _memory;private readonly MandateLimitChangeService _limitChanges;private readonly IMandateLimitChangeStore _limitChangeStore;private readonly IAuthorizationService _authorization;
     private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ICustomerRequestUnderstandingAgent _understanding;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, MerchantConnectorRegistry connectors,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,IConsumerPurchaseRequestAgent requestAgent,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_requestAgent=requestAgent;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -139,6 +139,14 @@ public sealed class ConsumerController : ControllerBase
         var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
         var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");
         var latestConversation=_planning.FindLatestOpen(principal,now.AddMinutes(-30));
+        if(latestConversation is not null&&ContainsAny(instruction,"cancel","never mind","nevermind","stop this order"))
+        {
+            var cancelledPlan=new ConsumerPurchasePlan("CANCELLED","Purchase cancelled","I cancelled the prepared purchase. Nothing was charged.",0,"GBP",[],[],null,[],InteractionDecision:"CANCELLED");
+            _planning.ReplaceReservations(latestConversation.ConversationId,[]);
+            _planning.Save(latestConversation with{Status="CANCELLED",UpdatedAt=now,Version=latestConversation.Version+1});
+            _planning.Append(new($"planning_turn_{Guid.NewGuid():N}",latestConversation.ConversationId,_planning.Turns(latestConversation.ConversationId).Count+1,"user","cancel",instruction,null,null,null,now));
+            return Ok(new{instruction,planning=cancelledPlan,paymentAttempted=false,trustBoundaryInvoked=false});
+        }
         var understanding=await _understanding.UnderstandAsync(instruction,latestConversation?.Objective,CommerceCapabilityCatalog.Describe(_connector),token);
         var hasExplicitBudget=understanding.ExplicitBudget is not null;
         var explicitContinuation=latestConversation is not null&&(understanding.ContinuesOpenProposal||PurchaseRequestBudgetGate.IsExplicitContinuation(instruction));
@@ -157,37 +165,18 @@ public sealed class ConsumerController : ControllerBase
             _planning.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,2,"assistant","clarification",planning.Message,null,null,null,now));
             return Ok(new{instruction,understanding,planning,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
         }
-        var resumesOpenConversation=latestConversation is not null&&(
-            PurchaseRequestBudgetGate.RefersToOpenProposal(instruction)
-            ||PurchaseRequestBudgetGate.IsBudgetOnlyAnswer(instruction)
-            ||!hasExplicitBudget&&explicitContinuation);
+        var resumesOpenConversation=latestConversation is not null&&explicitContinuation;
         var managedConversationId=!startsNew&&resumesOpenConversation?latestConversation?.ConversationId:null;
         var planningContext=new ConsumerActionPlanningContext(principal,managedConversationId,instruction,_connector.MerchantId,_connector.MerchantName,
             CommerceCapabilityCatalog.Describe(_connector));
-        ConsumerPurchasePlan plan;try{plan=await _requestAgent.PlanAsync(planningContext,token);}catch(UnauthorizedAccessException){return NotFound();}
-        if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
-        try
-        {
-            var planningTools=new ConnectorMerchantPlanningToolset(_connector,principal,plan.Currency,_objectiveCapabilities);
-            var quote=await planningTools.QuoteAsync(plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray(),token);
-            if(quote.Total>plan.MaximumAmount)return Ok(new{instruction,planning=plan with{Status=PurchasePlanningStatus.NeedsInput,InteractionDecision=PurchaseInteractionDecision.Clarify,Summary="Merchant quote exceeds budget",Message=$"The authoritative merchant total is £{quote.Total:0.00}, above the £{plan.MaximumAmount:0.00} budget.",EstimatedTotal=quote.Total,Questions=["Would you like to revise the basket or budget?"]},paymentAttempted=false,trustBoundaryInvoked=false,merchantQuote=quote});
-            plan=plan with{Currency=quote.Currency,Items=quote.Items.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray(),EstimatedTotal=quote.Total,Message=$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery."};
-        }
-        catch(KeyNotFoundException ex){return UnprocessableEntity(new{code="MERCHANT_ITEM_UNAVAILABLE",message=ex.Message,paymentAttempted=false,trustBoundaryInvoked=false});}
-        catch(InvalidOperationException ex){return UnprocessableEntity(new{code="MERCHANT_QUOTE_UNAVAILABLE",message=ex.Message,paymentAttempted=false,trustBoundaryInvoked=false});}
-        var catalogue=await _connector.SearchProductsAsync("",token);
+        ConsumerCommercePreparation prepared;try{prepared=await _commerceAgent.PrepareAsync(planningContext,now,token);}catch(UnauthorizedAccessException){return NotFound();}
+        var plan=prepared.Plan;
+        if(prepared.FailureCode is not null)return UnprocessableEntity(new{code=prepared.FailureCode,message=prepared.FailureMessage,planning=plan,paymentAttempted=false,trustBoundaryInvoked=false});
+        if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,merchantQuote=prepared.Quote,readiness=prepared.IsExecutable?"READY_FOR_CONFIRMATION":"NEEDS_INPUT",conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
         if(!(await _authorization.AuthorizeAsync(User,"StepUp")).Succeeded)return Forbid();
-        var holds=_planning.Reservations(plan.ConversationId!);if(holds.Count!=plan.Items.Count)return Conflict(new{code="PRODUCT_RESERVATION_INCOMPLETE"});
-        foreach(var hold in holds){var current=await _connector.GetProductAsync(hold.ProductId,token);if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)return Conflict(new{code="PRODUCT_REVALIDATION_REQUIRED",productId=hold.ProductId});}
-        var mandate=_mandates.FindByPrincipal(principal).Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase)&&string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase)&&x.PerTransactionLimit>=plan.MaximumAmount)
-            .OrderBy(x=>x.PerTransactionLimit).FirstOrDefault();
-        if(mandate is null)return UnprocessableEntity(new{code="NO_SUITABLE_ACTIVE_MANDATE",message="Create an active grocery mandate whose per-transaction limit covers the requested budget."});
-        var method=_paymentMethods.Find(mandate.PaymentMethodId);if(method is null||method.PrincipalId!=principal||!method.IsUsable(DateOnly.FromDateTime(DateTime.UtcNow)))return UnprocessableEntity(new{code="NO_USABLE_PAYMENT_METHOD"});
-        var task=new ConsumerPurchaseTask($"ctask_{Guid.NewGuid():N}",principal,mandate.AgentId,new HashSet<string>([_connector.MerchantId],StringComparer.OrdinalIgnoreCase),"OneOff","Europe/London",plan.MaximumAmount,plan.Currency,
-            plan.Items.Select(x=>new ShoppingListItem(x.SearchTerm,x.Quantity,catalogue.FirstOrDefault(p=>p.ProductId.Equals(x.SearchTerm,StringComparison.OrdinalIgnoreCase))?.ProductId)).ToList(),new PurchasePreference(mandate.TaskParameters.GetValueOrDefault("deliveryAddressReference")??"default-delivery-address",null,SubstitutionPolicy.SameOrLowerPrice,new Dictionary<string,string>{{"instruction",instruction}}),
-            mandate.MandateId,method.PaymentMethodId,ConsumerTaskStatus.Active,now,now);
-        _tasks.Save(task);var stripe=string.Equals(_configuration["Payments:Provider"],"Stripe",StringComparison.OrdinalIgnoreCase);
-        var result=await _orchestrator.RunAsync(task.TaskId,principal,now,_connector,new(stripe,true),token);
+        var preparedTask=_commerceAgent.PreparePurchase(prepared,principal,instruction,now);var task=_tasks.FindOwned(preparedTask.TaskId,principal);
+        if(task is null){task=preparedTask;_tasks.Save(task);}var stripe=string.Equals(_configuration["Payments:Provider"],"Stripe",StringComparison.OrdinalIgnoreCase);
+        var result=await _orchestrator.RunAsync(task.TaskId,principal,task.CreatedAt,_connector,new(stripe,true),token);
         return Ok(new{instruction,planning=plan,paymentAttempted=result.Execution.State is PurchaseExecutionState.CheckoutSubmitted or PurchaseExecutionState.Processing or PurchaseExecutionState.Purchased,trustBoundaryInvoked=true,taskId=task.TaskId,result.Execution,result.Intent,result.Receipt});
     }
     [HttpGet("purchases/{id}")] public ActionResult<PurchaseExecution> Purchase(string id) => _purchases.FindOwned(id, PrincipalId()) is { } item ? Ok(item) : NotFound();

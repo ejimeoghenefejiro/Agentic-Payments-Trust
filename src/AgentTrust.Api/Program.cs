@@ -282,6 +282,7 @@ builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
 builder.Services.AddScoped<IProviderPlanningCapability, CommerceConnectorPlanningCapability>();
 builder.Services.AddScoped<IDomainPlanningCapability, GroceryDomainPlanningCapability>();
 builder.Services.AddScoped<IConsumerPurchaseRequestAgent, ConsumerPurchaseRequestAgent>();
+builder.Services.AddScoped<ConsumerCommerceAgent>();
 builder.Services.AddScoped<ICustomerRequestUnderstandingAgent, SemanticKernelCustomerRequestUnderstandingAgent>();
 builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
 {

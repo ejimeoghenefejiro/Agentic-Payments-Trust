@@ -56,7 +56,7 @@ public static class PurchasePlanGuard
     public static bool TryBuildSingleProductPlan(string instruction,IReadOnlyList<Product> catalogue,out ConsumerPurchasePlan plan)
     {
         plan=null!;var budgetMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var productMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(.+?)(?=\s+(?:for\s+)?(?:my\s+)?budget\b|\s+under\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var productMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(?:me\s+)?(.+?)(?=\s+(?:for\s+)?(?:my\s+)?budget\b|\s+on\s+a\s+budget\b|\s+under\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if(!budgetMatch.Success||!productMatch.Success)return false;var budget=decimal.Parse(budgetMatch.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture);var requested=productMatch.Groups[1].Value.Trim();if(requested.Length==0||requested.Contains(',')||System.Text.RegularExpressions.Regex.IsMatch(requested,@"\band\b|\bto make\b|\bfor\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+people\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
         var (query,quantity)=NormalizeProductRequest(requested);var product=catalogue.Where(x=>x.AvailableQuantity>=quantity&&(x.ProductId.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Description.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Tags.Any(t=>t.Contains(query,StringComparison.OrdinalIgnoreCase)))).OrderBy(x=>x.UnitPrice).FirstOrDefault();
         if(product is null){plan=new(PurchasePlanningStatus.NeedsInput,"Product not found",$"I could not find an available merchant product matching '{query}'.",budget,"GBP",[],[$"Would you like a similar alternative to {query}?"],null,["search_catalogue"]);return true;}
@@ -67,7 +67,7 @@ public static class PurchasePlanGuard
     public static bool TryBuildExplicitProductListPlan(string instruction,IReadOnlyList<Product> catalogue,out ConsumerPurchasePlan plan)
     {
         plan=null!;var budgetMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var listMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(.+?)(?=\s+to\s+make\b|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var listMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(?:me\s+)?(.+?)(?=\s+to\s+make\b|\s+(?:on\s+a\s+|for\s+(?:my\s+)?)?budget\b|\s+under\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if(!budgetMatch.Success||!listMatch.Success)return false;var raw=System.Text.RegularExpressions.Regex.Replace(listMatch.Groups[1].Value.Trim(),@"^enough\s+","",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if(!raw.Contains(',')&&!System.Text.RegularExpressions.Regex.IsMatch(raw,@"\band\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
         var terms=System.Text.RegularExpressions.Regex.Split(raw,@"\s*,\s*|\s+and\s+",System.Text.RegularExpressions.RegexOptions.IgnoreCase)
@@ -109,11 +109,11 @@ public sealed record ConsumerPlanningState(string Objective,Dictionary<string,st
 public sealed class GroceryConsumerPurchasePlanner
 {
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true};
-    private readonly IConsumerPlanningStore _store;private readonly IConsumerMemoryService? _memory;private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
+    private readonly IConsumerPlanningStore _store;private readonly IConsumerMemoryService? _memory;private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ILogger<GroceryConsumerPurchasePlanner>? _logger;private readonly bool _allowDeterministicFallback;private readonly int _maximumToolCalls;private readonly int _maximumReasoningTurns;private readonly int _planningTimeoutSeconds;
     private const int DefaultMaximumToolCalls=40;private const int DefaultMaximumReasoningTurns=40;
-    public GroceryConsumerPurchasePlanner(IConsumerPlanningStore store,IConfiguration configuration,IConsumerMemoryService? memory=null,IEnumerable<IObjectiveExpansionCapability>? objectiveCapabilities=null)
+    public GroceryConsumerPurchasePlanner(IConsumerPlanningStore store,IConfiguration configuration,IConsumerMemoryService? memory=null,IEnumerable<IObjectiveExpansionCapability>? objectiveCapabilities=null,ILogger<GroceryConsumerPurchasePlanner>? logger=null)
     {
-        _store=store;_memory=memory;_objectiveCapabilities=(objectiveCapabilities??[]).ToArray();_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
+        _store=store;_memory=memory;_objectiveCapabilities=(objectiveCapabilities??[]).ToArray();_logger=logger;_allowDeterministicFallback=configuration.GetValue("ConsumerPilot:Planning:AllowDeterministicFallback",false);
         _maximumToolCalls=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumToolCalls",DefaultMaximumToolCalls),8,80);
         _maximumReasoningTurns=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:MaximumReasoningTurns",DefaultMaximumReasoningTurns),8,40);
         _planningTimeoutSeconds=Math.Clamp(configuration.GetValue("ConsumerPilot:Planning:TimeoutSeconds",90),30,180);
@@ -130,19 +130,33 @@ public sealed class GroceryConsumerPurchasePlanner
         LearnConstraints(state.Constraints,instruction);conversation??=_store.Create(principal,instruction,JsonSerializer.Serialize(state),now);_memory?.CaptureCorrections(principal,instruction,conversation.ConversationId);
         foreach(var constraint in state.Constraints)_store.Remember(principal,constraint.Key,constraint.Value,conversation.ConversationId,now);
         var sequence=_store.Turns(conversation.ConversationId).Count+1;_store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence++,"user","message",instruction,null,null,null,now));
-        var completeInstruction=string.Join("\n",new[]{state.Objective,instruction});
+        if(state.LatestPlan is {Status:PurchasePlanningStatus.Ready} prepared&&IsApproval(instruction))
+        {
+            var confirmed=prepared with{ConversationId=conversation.ConversationId,InteractionDecision=PurchaseInteractionDecision.Execute,Questions=[]};
+            Reserve(conversation.ConversationId,confirmed,catalogue,now);
+            state=state with{Status=PurchasePlanningStatus.Ready,LatestPlan=confirmed};
+            _store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence,"assistant","confirmation","The prepared purchase is ready for protected execution.",null,null,null,now));
+            _store.Save(conversation with{Status=PurchasePlanningStatus.Ready,StateJson=JsonSerializer.Serialize(state),UpdatedAt=now,Version=conversation.Version+1});
+            return confirmed;
+        }
+        var completeInstruction=BuildCompleteInstruction(state,instruction);
         ConsumerPurchasePlan? plan=await BuildDomainClarification(completeInstruction,catalogue,token);
-        if(plan is null&&PurchasePlanGuard.TryBuildExplicitProductListPlan(completeInstruction,catalogue,out var explicitPlan)
-            &&explicitPlan.Status==PurchasePlanningStatus.Ready)
+        if(plan is null&&PurchasePlanGuard.TryBuildExplicitProductListPlan(completeInstruction,catalogue,out var explicitPlan))
             plan=explicitPlan;
         if(plan is null&&AgentFactory.IsLiveModeConfigured)
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(_planningTimeoutSeconds));
             try{plan=await AskModel(state,instruction,catalogue,timeout.Token);}
-            catch(Exception ex) when(ex is not OperationCanceledException||!token.IsCancellationRequested){plan=null;}
+            catch(Exception ex) when(ex is not OperationCanceledException||!token.IsCancellationRequested)
+            {
+                _logger?.LogWarning(ex,"Semantic Kernel purchase planning failed for conversation {ConversationId}.",conversation.ConversationId);
+                plan=null;
+            }
         }
         plan??=_allowDeterministicFallback||SupportsObjective(completeInstruction)?await Fallback(completeInstruction,catalogue,token):Unavailable(instruction);
         plan=PurchasePlanGuard.Normalize(plan);
+        if(TryGetConfirmedBudget(state,out var confirmedBudget))
+            plan=plan with{MaximumAmount=confirmedBudget};
         if(PurchasePlanGuard.TryReplaceUnsupportedDeliveryConclusion(completeInstruction,catalogue,plan,out var deliveryCorrectedPlan))
             plan=deliveryCorrectedPlan;
         if(PurchasePlanGuard.TryReplaceContradictoryAffordableConclusion(completeInstruction,catalogue,plan,out var affordabilityCorrectedPlan))
@@ -174,8 +188,7 @@ public sealed class GroceryConsumerPurchasePlanner
         }
         var explicitlyApproved=ContainsAny(instruction,"use your best judgement and proceed","proceed with this basket","confirm purchase","go ahead and pay");
         var decision=plan.Status!=PurchasePlanningStatus.Ready?PurchaseInteractionDecision.Clarify
-            :policy.ShowBasketBeforePayment&&!explicitlyApproved||policy.AskBeforeSubstitutions&&plan.HasSubstitutions&&!explicitlyApproved?PurchaseInteractionDecision.Propose
-            :PurchaseInteractionDecision.Execute;
+            :explicitlyApproved?PurchaseInteractionDecision.Execute:PurchaseInteractionDecision.Propose;
         plan=plan with{Currency="GBP",ConversationId=conversation.ConversationId,ReasoningTurns=plan.ReasoningTurns==0?plan.ToolsUsed.Count:plan.ReasoningTurns,InteractionDecision=decision};
         foreach(var call in PurchasePlanningPlugin.LastCalls){_store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence++,"tool","evidence",call.Output,call.Name,call.Input,call.Output,DateTimeOffset.UtcNow));state.ToolHistory.Add(call.Name);if(call.Name=="price_basket")state.AttemptedBaskets.Add(call.Output);}
         state.OpenQuestions.Clear();state.OpenQuestions.AddRange(plan.Questions);state.Hypotheses.Add(plan.Summary);if(plan.Status!=PurchasePlanningStatus.Ready&&plan.EstimatedTotal is not null)state.RejectedAlternatives.Add(plan.Message);state=state with{Status=plan.Status,LatestPlan=plan};
@@ -288,14 +301,30 @@ public sealed class GroceryConsumerPurchasePlanner
         return current with{InteractionMode="AUTO_WHEN_SAFE",AskBeforeSubstitutions=ask,ShowBasketBeforePayment=show,UpdatedAt=now,Version=current.Version+1};
     }
     private static bool ContainsAny(string value,params string[] phrases)=>phrases.Any(x=>value.Contains(x,StringComparison.OrdinalIgnoreCase));
+    private static bool IsApproval(string value)=>System.Text.RegularExpressions.Regex.IsMatch(value.Trim(),@"^(?:yes|yes,?\s+please|go\s+ahead|confirm|confirmed|proceed|buy\s+it|pay)(?:[.!])?$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     private static void LearnConstraints(Dictionary<string,string> values,string message)
     {
+        if(PurchaseRequestBudgetGate.TryGetExplicitBudget(message,out var budget)&&budget is not null)
+            values["maximumBudget"]=budget.Value.ToString("0.00",System.Globalization.CultureInfo.InvariantCulture);
         var servings=System.Text.RegularExpressions.Regex.Match(message,@"(?:serves?|for)\s+(\d+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);if(servings.Success)values["servings"]=servings.Groups[1].Value;
         var allergy=System.Text.RegularExpressions.Regex.Match(message,@"allergic to\s+([a-z ,]+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);if(allergy.Success)values["allergies"]=allergy.Groups[1].Value.Trim();
         if(message.Contains("vegetarian",StringComparison.OrdinalIgnoreCase))values["diet"]="vegetarian";if(message.Contains("vegan",StringComparison.OrdinalIgnoreCase))values["diet"]="vegan";
         if(message.Contains("high protein",StringComparison.OrdinalIgnoreCase))values["nutrition"]="high-protein";var calories=System.Text.RegularExpressions.Regex.Match(message,@"(?:under|max(?:imum)?)\s+(\d+)\s+calories",System.Text.RegularExpressions.RegexOptions.IgnoreCase);if(calories.Success)values["maximumCalories"]=calories.Groups[1].Value;
         var owns=System.Text.RegularExpressions.Regex.Match(message,@"(?:already have|I have)\s+([a-z ,]+)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);if(owns.Success)values["inventoryAtHome"]=owns.Groups[1].Value.Trim();
         if(message.Contains("substitution",StringComparison.OrdinalIgnoreCase)||message.Contains("substitute",StringComparison.OrdinalIgnoreCase))values["acceptedSubstitutionFeedback"]=message;
+    }
+    private static string BuildCompleteInstruction(ConsumerPlanningState state,string instruction)
+    {
+        var parts=new List<string>{state.Objective,instruction};
+        if(TryGetConfirmedBudget(state,out var budget))
+            parts.Add($"Confirmed maximum budget for this conversation: £{budget:0.00}.");
+        return string.Join("\n",parts);
+    }
+    private static bool TryGetConfirmedBudget(ConsumerPlanningState state,out decimal budget)
+    {
+        budget=0;
+        return state.Constraints.TryGetValue("maximumBudget",out var value)&&
+               decimal.TryParse(value,System.Globalization.NumberStyles.Number,System.Globalization.CultureInfo.InvariantCulture,out budget)&&budget>0;
     }
     private static string? FindConstraintViolation(ConsumerPurchasePlan plan,IReadOnlyDictionary<string,string> constraints,IReadOnlyList<Product> catalogue)
     {

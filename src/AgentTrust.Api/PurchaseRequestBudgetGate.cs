@@ -68,10 +68,10 @@ public static partial class PurchaseRequestBudgetGate
     [GeneratedRegex(@"\b(?:budget|maximum|max(?:imum)?\s+spend|spend\s+up\s+to|do\s+not\s+spend\s+more\s+than|under|within)\D{0,20}\d+(?:\.\d{1,2})?\b", RegexOptions.IgnoreCase)]
     private static partial Regex NamedLimit();
 
-    [GeneratedRegex(@"\b(?:yes|confirm|confirmed|that\s+(?:suggestion|basket|option)|the\s+suggested|proceed\s+with|use\s+your\s+best\s+judgement\s+and\s+proceed|go\s+ahead|I\s+already\s+have|I\s+do\s+not\s+have|I\s+don't\s+have|remove|leave\s+out|use\s+.+\s+instead)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:yes|confirm|confirmed|that\s+(?:suggestion|basket|option)|the\s+suggested|proceed\s+with|use\s+your\s+best\s+judgement\s+and\s+proceed|go\s+ahead|no\s+allerg(?:y|ies)|dietary\s+requirements?|show\s+(?:me\s+)?(?:alternatives?|cheaper\s+options)|change\s+the\s+basket|I\s+already\s+have|I\s+do\s+not\s+have|I\s+don't\s+have|remove|leave\s+out|use\s+.+\s+instead)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ContinuationLanguage();
 
-    [GeneratedRegex(@"\b(?:that\s+(?:suggestion|basket|option|meal)|the\s+suggested(?:\s+(?:basket|option|meal))?|I\s+already\s+have|I\s+do\s+not\s+have|I\s+don't\s+have|remove\s+that|leave\s+that\s+out|use\s+that\s+instead)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:that\s+(?:suggestion|basket|option|meal)|the\s+suggested(?:\s+(?:basket|option|meal))?|no\s+allerg(?:y|ies)|dietary\s+requirements?|show\s+(?:me\s+)?(?:alternatives?|cheaper\s+options)|change\s+the\s+basket|I\s+already\s+have|I\s+do\s+not\s+have|I\s+don't\s+have|remove\s+that|remove\s+the\s+unavailable\s+item|leave\s+that\s+out|use\s+that\s+instead)\b", RegexOptions.IgnoreCase)]
     private static partial Regex PriorProposalReference();
 
     [GeneratedRegex(@"^(?:my\s+(?:maximum\s+)?budget\s+is\s+)?(?:£|GBP\s*)?\s*\d+(?:\.\d{1,2})?\s*(?:pounds?|GBP)?[.!]?$", RegexOptions.IgnoreCase)]

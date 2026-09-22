@@ -71,6 +71,10 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     [InlineData("£20")]
     [InlineData("I already have chicken and tomatoes")]
     [InlineData("Use your best judgement and proceed")]
+    [InlineData("No allergies")]
+    [InlineData("Show me alternatives")]
+    [InlineData("Show cheaper options")]
+    [InlineData("Remove the unavailable item")]
     public void BudgetGate_RecognisesAnExplicitFollowUp(string instruction) =>
         Assert.True(AgentTrust.Api.PurchaseRequestBudgetGate.IsExplicitContinuation(instruction));
 
@@ -227,6 +231,32 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,missing.Status);Assert.Empty(missing.Items);
     }
     [Fact]
+    public async Task PurchasePlanner_PreservesConfirmedBudgetAcrossAConfirmationTurn()
+    {
+        var store=new AgentTrust.Consumer.InMemoryConsumerPlanningStore();
+        var initialPlan=AgentTrust.Api.PurchaseRequestBudgetGate.Clarification();
+        var state=new AgentTrust.Api.ConsumerPlanningState(
+            "Buy two loaves of wholemeal bread.",new(),[],initialPlan.Questions.ToList(),[],[],[],initialPlan.Status,initialPlan);
+        var conversation=store.Create("principal_1",state.Objective,JsonSerializer.Serialize(state),DateTimeOffset.UtcNow);
+        store.Save(conversation with{Status=AgentTrust.Api.PurchasePlanningStatus.NeedsInput});
+        var configuration=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {
+            ["ConsumerPilot:Planning:AllowDeterministicFallback"]="true"
+        }).Build();
+        var planner=new AgentTrust.Api.GroceryConsumerPurchasePlanner(store,configuration);
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})
+        ];
+
+        var budgetTurn=await planner.PlanAsync("principal_1",conversation.ConversationId,"£8",catalogue,CancellationToken.None);
+        var confirmationTurn=await planner.PlanAsync("principal_1",conversation.ConversationId,"yes",catalogue,CancellationToken.None);
+
+        Assert.Equal(8m,budgetTurn.MaximumAmount);
+        Assert.Equal(8m,confirmationTurn.MaximumAmount);
+        Assert.NotEqual(4.99m,confirmationTurn.MaximumAmount);
+    }
+    [Fact]
     public void PurchasePlanGuard_SplitsAndGroundsExplicitMultiProductMealRequest()
     {
         AgentTrust.Commerce.Product[] catalogue=
@@ -257,6 +287,28 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(17.95m,plan.EstimatedTotal);
         Assert.Equal(4,plan.Items.Count);
         Assert.Contains("price_basket",plan.ToolsUsed);
+    }
+    [Fact]
+    public async Task ExplicitProductList_WithUnavailableItem_ReturnsGroundedClarificationWithoutModelLoop()
+    {
+        var store=new AgentTrust.Consumer.InMemoryConsumerPlanningStore();
+        var configuration=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {
+            ["ConsumerPilot:Planning:AllowDeterministicFallback"]="false"
+        }).Build();
+        var planner=new AgentTrust.Api.GroceryConsumerPurchasePlanner(store,configuration);
+        AgentTrust.Commerce.Product[] catalogue=
+        [
+            new("bread-wholemeal","Wholemeal bread",1.40m,"GBP",10,new HashSet<string>{"wholemeal bread","bread"})
+        ];
+
+        var plan=await planner.PlanAsync("principal_1",null,"Buy me bread and fish on a budget. My maximum budget is £12.",catalogue,CancellationToken.None);
+
+        Assert.Equal(AgentTrust.Api.PurchasePlanningStatus.NeedsInput,plan.Status);
+        Assert.Contains("fish",plan.Message,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("search_catalogue_batch",plan.ToolsUsed);
+        Assert.True(plan.ReasoningTurns<40);
+        Assert.Empty(plan.Items);
     }
     private readonly HttpClient _client;
     private readonly WebApplicationFactory<Program> _factory;
@@ -333,7 +385,9 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.False(lowBudget.GetProperty("paymentAttempted").GetBoolean());Assert.False(lowBudget.GetProperty("trustBoundaryInvoked").GetBoolean());Assert.False(lowBudget.TryGetProperty("taskId",out _));
             Assert.False(lowBudget.GetProperty("planning").TryGetProperty("conversationId",out _));
             using var answer=new StringContent("I already have chicken, sauce, lettuce and tomatoes.",System.Text.Encoding.UTF8,"text/plain");var resumed=await _client.PostAsync("/api/consumer/purchases/request",answer);
-            Assert.Equal(HttpStatusCode.OK,resumed.StatusCode);var resumedBody=await resumed.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("READY",resumedBody.GetProperty("planning").GetProperty("status").GetString());Assert.Equal(4.30m,resumedBody.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.True(resumedBody.GetProperty("trustBoundaryInvoked").GetBoolean());
+            Assert.Equal(HttpStatusCode.OK,resumed.StatusCode);var resumedBody=await resumed.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal("READY",resumedBody.GetProperty("planning").GetProperty("status").GetString());Assert.Equal(4.30m,resumedBody.GetProperty("planning").GetProperty("estimatedTotal").GetDecimal());Assert.Equal("READY_FOR_CONFIRMATION",resumedBody.GetProperty("readiness").GetString());Assert.False(resumedBody.GetProperty("trustBoundaryInvoked").GetBoolean());
+            using var confirmation=new StringContent("Yes",System.Text.Encoding.UTF8,"text/plain");var confirmed=await _client.PostAsync("/api/consumer/purchases/request",confirmation);
+            Assert.Equal(HttpStatusCode.OK,confirmed.StatusCode);var confirmedBody=await confirmed.Content.ReadFromJsonAsync<JsonElement>();Assert.True(confirmedBody.GetProperty("trustBoundaryInvoked").GetBoolean());
         }
         using(var reviewRequest=new StringContent("Show me the basket before paying. I want to make chicken wraps within a £20 budget.",System.Text.Encoding.UTF8,"text/plain"))
         {
@@ -350,8 +404,10 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
             Assert.Equal(HttpStatusCode.OK,naturalResponse.StatusCode);var natural=await naturalResponse.Content.ReadFromJsonAsync<JsonElement>();
             Assert.False(string.IsNullOrWhiteSpace(natural.GetProperty("planning").GetProperty("summary").GetString()));
             Assert.Contains("price_basket",natural.GetProperty("planning").GetProperty("toolsUsed").EnumerateArray().Select(x=>x.GetString()));
-            Assert.Equal((int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,natural.GetProperty("execution").GetProperty("state").GetInt32());
-            Assert.Equal(5,natural.GetProperty("intent").GetProperty("basketItems").GetArrayLength());
+            Assert.Equal("READY_FOR_CONFIRMATION",natural.GetProperty("readiness").GetString());
+            using var confirmation=new StringContent("Yes",System.Text.Encoding.UTF8,"text/plain");var executedResponse=await _client.PostAsync("/api/consumer/purchases/request",confirmation);
+            var executed=await executedResponse.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal((int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,executed.GetProperty("execution").GetProperty("state").GetInt32());
+            Assert.Equal(5,executed.GetProperty("intent").GetProperty("basketItems").GetArrayLength());
         }
         var taskResponse=await _client.PostAsJsonAsync("/api/consumer/tasks",new{instruction="Buy weekly groceries",merchantId="demo-grocery",mandateId,paymentMethodId=methodId,currency="GBP",maximumAmount=70m,timezone="Europe/London",schedule=new{frequency="Weekly",dayOfWeek="Sunday",localTime="10:00"},shoppingList=new[]{new{query="milk",quantity=2},new{query="bread",quantity=1},new{query="eggs",quantity=1},new{query="bananas",quantity=1}},substitutionPolicy=new{allowed=true,maximumAdditionalAmount=5m},deliveryAddressReference="test-address"});
         Assert.Equal(HttpStatusCode.Created,taskResponse.StatusCode);var task=await taskResponse.Content.ReadFromJsonAsync<JsonElement>();var taskId=task.GetProperty("taskId").GetString()!;
