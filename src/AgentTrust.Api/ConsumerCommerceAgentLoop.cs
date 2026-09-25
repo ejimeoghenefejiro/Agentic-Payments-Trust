@@ -23,6 +23,24 @@ public static class CommerceProposalFingerprint
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 }
+public static class CommerceFinalProposalAudit
+{
+    public static IReadOnlyList<string> Validate(ConsumerPurchasePlan plan,MerchantPlanningQuote quote,DateTimeOffset now)
+    {
+        var failures=new List<string>();
+        if(plan.Status!=PurchasePlanningStatus.Ready)failures.Add("PLAN_NOT_READY");
+        if(quote.ExpiresAt<=now)failures.Add("QUOTE_EXPIRED");
+        if(!string.Equals(plan.Currency,quote.Currency,StringComparison.OrdinalIgnoreCase))failures.Add("CURRENCY_MISMATCH");
+        if(quote.Total>plan.MaximumAmount)failures.Add("BUDGET_EXCEEDED");
+        var planned=plan.Items.GroupBy(x=>x.SearchTerm,StringComparer.OrdinalIgnoreCase).ToDictionary(x=>x.Key,x=>x.Sum(v=>v.Quantity),StringComparer.OrdinalIgnoreCase);
+        var quoted=quote.Items.GroupBy(x=>x.ProductId,StringComparer.OrdinalIgnoreCase).ToDictionary(x=>x.Key,x=>x.Sum(v=>v.Quantity),StringComparer.OrdinalIgnoreCase);
+        if(planned.Count!=quoted.Count||planned.Any(x=>!quoted.TryGetValue(x.Key,out var quantity)||quantity!=x.Value))
+            failures.Add("PLAN_QUOTE_ITEM_MISMATCH");
+        if(quote.Items.Any(x=>x.Quantity<=0||x.UnitPrice<0||x.TotalPrice!=x.UnitPrice*x.Quantity))
+            failures.Add("INVALID_QUOTE_ITEM");
+        return failures;
+    }
+}
 public sealed record CommerceAgentContext(string Objective,decimal MaximumAmount,string Currency,
     MerchantPlanningContext Provider,IReadOnlyDictionary<string,string> CustomerContext,
     IReadOnlyList<Product> Candidates,IReadOnlyList<string> Evidence,int Turn);

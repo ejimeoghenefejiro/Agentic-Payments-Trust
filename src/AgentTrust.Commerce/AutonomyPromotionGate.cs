@@ -15,6 +15,14 @@ public sealed record AutonomyPromotionDecision(bool Promoted, IReadOnlyList<stri
 /// </summary>
 public sealed class AutonomyPromotionGate
 {
+    public static IReadOnlySet<string> RequiredScenarios { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "recurring-approved-substitute","optional-item-omission","price-change-replanning",
+        "process-restart-resumption","payment-timeout-idempotency","multi-provider-authoritative-comparison",
+        "rejected-substitution-learning","cross-customer-isolation","audited-proposal-integrity",
+        "payment-fulfilment-receipt-goal-proof"
+    };
+
     public AutonomyPromotionDecision Evaluate(AutonomyEvaluation evaluation)
     {
         var failures = new List<string>();
@@ -23,6 +31,8 @@ public sealed class AutonomyPromotionGate
         failures.AddRange(evaluation.Scenarios
             .Where(scenario => !scenario.Passed)
             .Select(scenario => $"SCENARIO_FAILED:{scenario.Name}"));
+        var supplied=evaluation.Scenarios.Select(x=>x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        failures.AddRange(RequiredScenarios.Where(name=>!supplied.Contains(name)).Select(name=>$"SCENARIO_MISSING:{name}"));
         return new(failures.Count == 0, failures);
     }
 }

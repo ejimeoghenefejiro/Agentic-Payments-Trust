@@ -16,6 +16,7 @@ public sealed class DemoGroceryConnector : ICommerceConnector, IFulfilmentOption
     private readonly ICommerceDurability _durability;
     private readonly Dictionary<string, Product> _catalogue; private readonly Dictionary<string, MutableBasket> _baskets = new();
     private readonly Dictionary<string, ConnectorPurchaseResult> _purchases = new();
+    public bool IncludeFulfilmentEvidence { get; set; } = true;
     private sealed class MutableBasket { public required string Id; public required string PrincipalId; public Dictionary<string, (int Quantity, bool Substitute)> Items { get; } = new(); public string? DeliveryOptionId; }
     public string MerchantId => "GroceryDemo"; public string MerchantName => "Demo Grocery";
 
@@ -73,7 +74,9 @@ public sealed class DemoGroceryConnector : ICommerceConnector, IFulfilmentOption
         var result = payment.Status switch
         {
             PlatformPaymentStatus.Succeeded => new ConnectorPurchaseResult(ConnectorPurchaseStatus.Succeeded, payment.ProviderReference, null, null,
-                new PurchaseReceipt($"receipt_{Guid.NewGuid():N}", intent.PurchaseIntentId, MerchantId, intent.TotalAmount, intent.Currency, payment.ProviderReference ?? "", DateTimeOffset.UtcNow)),
+                new PurchaseReceipt($"receipt_{Guid.NewGuid():N}", intent.PurchaseIntentId, MerchantId, intent.TotalAmount, intent.Currency, payment.ProviderReference ?? "", DateTimeOffset.UtcNow),
+                IncludeFulfilmentEvidence?new CommerceFulfilmentEvidence($"fulfilment_{intent.PurchaseIntentId}",FulfilmentStatus.Accepted,
+                    $"order_{intent.PurchaseIntentId}",DateTimeOffset.UtcNow,intent.PurchaseIntentId,MerchantId):null),
             PlatformPaymentStatus.RequiresAction => new ConnectorPurchaseResult(ConnectorPurchaseStatus.RequiresAction, payment.ProviderReference, payment.RequiredAction, null, null),
             PlatformPaymentStatus.Processing => new ConnectorPurchaseResult(ConnectorPurchaseStatus.Processing, payment.ProviderReference, null, null, null),
             PlatformPaymentStatus.Failed => new ConnectorPurchaseResult(ConnectorPurchaseStatus.Failed, payment.ProviderReference, null, payment.FailureReason, null),

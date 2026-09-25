@@ -49,15 +49,16 @@ public sealed class ConsumerCommerceAgent
         if(plan.Status!=PurchasePlanningStatus.Ready)
             return new(plan,null,null,null,[]);
 
-        MerchantPlanningQuote quote;ICommerceConnector selectedConnector;
+        MerchantPlanningQuote? quote=null;ICommerceConnector? selectedConnector=null;
         try
         {
             var permittedMerchants=_mandates.FindByPrincipal(context.PrincipalId).Where(x=>x.IsActive(now)&&
                 string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase))
                 .Select(x=>x.Merchant).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var providers=_connectors.All.Where(x=>permittedMerchants.Contains(x.MerchantId)).ToArray();
-            var optimized=await new CommerceProviderOptimizer(_objectiveCapabilities).QuoteBestAsync(context.PrincipalId,providers,
-                plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray(),plan.MaximumAmount,plan.Currency,cancellationToken);
+            var requested=plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray();
+            var optimized=await new CommerceProviderOptimizer(_objectiveCapabilities).QuoteBestCurrentAsync(
+                context.PrincipalId,providers,requested,plan.MaximumAmount,plan.Currency,3,cancellationToken);
             quote=optimized.BestQuote;selectedConnector=_connectors.GetRequired(quote.MerchantId);
         }
         catch(KeyNotFoundException ex)
@@ -82,14 +83,9 @@ public sealed class ConsumerCommerceAgent
             Questions=plan.InteractionDecision==PurchaseInteractionDecision.Execute?[]:["Shall I go ahead?"]};
 
         var catalogue=await selectedConnector.SearchProductsAsync("",cancellationToken);
-        var holds=_planning.Reservations(plan.ConversationId!);
-        if(holds.Count!=plan.Items.Count)return Failed(plan,"PRODUCT_RESERVATION_INCOMPLETE","The prepared products could not all be reserved.",quote,catalogue);
-        foreach(var hold in holds)
-        {
-            var current=await selectedConnector.GetProductAsync(hold.ProductId,cancellationToken);
-            if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)
-                return Failed(plan,"PRODUCT_REVALIDATION_REQUIRED",$"{hold.ProductId} must be quoted again.",quote,catalogue);
-        }
+        _planning.ReplaceReservations(plan.ConversationId!,quote.Items.Select(item=>new ConsumerProductReservation(
+            $"product_hold_{Guid.NewGuid():N}",plan.ConversationId!,item.ProductId,item.Quantity,item.UnitPrice,
+            quote.Currency,"Reserved",now,quote.ExpiresAt)).ToArray());
 
         var mandate=_mandates.FindByPrincipal(context.PrincipalId)
             .Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,quote.MerchantId,StringComparison.OrdinalIgnoreCase)&&
@@ -99,8 +95,12 @@ public sealed class ConsumerCommerceAgent
         var method=_paymentMethods.Find(mandate.PaymentMethodId);
         if(method is null||method.PrincipalId!=context.PrincipalId||!method.IsUsable(DateOnly.FromDateTime(now.UtcDateTime)))
             return Failed(plan,"NO_USABLE_PAYMENT_METHOD","The mandate does not have an owned, usable payment method.",quote,catalogue);
-        var auditTools=plan.ToolsUsed.Where(x=>!x.StartsWith("auditor:proposal-hash:",StringComparison.Ordinal)).ToList();
+        var finalAudit=CommerceFinalProposalAudit.Validate(plan,quote,now);
+        if(finalAudit.Count>0)return Failed(plan,"FINAL_PROPOSAL_AUDIT_FAILED",string.Join(',',finalAudit),quote,catalogue);
+        var auditTools=plan.ToolsUsed.Where(x=>!x.StartsWith("auditor:proposal-hash:",StringComparison.Ordinal)
+            &&!x.Equals("auditor:final-controls-accepted",StringComparison.OrdinalIgnoreCase)).ToList();
         if(!auditTools.Contains("auditor:accepted",StringComparer.OrdinalIgnoreCase))auditTools.Add("auditor:accepted");
+        auditTools.Add("auditor:final-controls-accepted");
         var auditedPlan=plan with{ToolsUsed=auditTools.ToArray()};
         auditTools.Add($"auditor:proposal-hash:{CommerceProposalFingerprint.Hash(auditedPlan,quote)}");
         plan=auditedPlan with{ToolsUsed=auditTools.ToArray()};

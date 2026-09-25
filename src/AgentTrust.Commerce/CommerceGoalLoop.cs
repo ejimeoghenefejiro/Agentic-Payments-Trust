@@ -102,7 +102,8 @@ public sealed class CommerceGoalLoop
         Basket basket,
         ICommerceConnector connector,
         CancellationToken cancellationToken,
-        IReadOnlyCollection<string>? excludedProductTerms = null)
+        IReadOnlyCollection<string>? excludedProductTerms = null,
+        IReadOnlyCollection<string>? preferredProductTerms = null)
     {
         // Observe: obtain current provider inventory, not remembered catalogue data.
         var observed = await connector.SearchProductsAsync(goal.SearchTerm, cancellationToken);
@@ -121,7 +122,8 @@ public sealed class CommerceGoalLoop
             .Where(product => substitutionPriceCeiling is null
                 || product.ProductId.Equals(goal.PreferredProductId, StringComparison.OrdinalIgnoreCase)
                 || product.UnitPrice <= substitutionPriceCeiling)
-            .OrderBy(product => product.UnitPrice)
+            .OrderBy(product => IsExcluded(product, preferredProductTerms) ? 0 : 1)
+            .ThenBy(product => product.UnitPrice)
             .ThenBy(product => product.ProductId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 

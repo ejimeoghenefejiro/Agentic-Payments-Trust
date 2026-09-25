@@ -62,7 +62,8 @@ public sealed class CommercePurchaseTests
         var cycle = fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-1");
         Assert.NotNull(cycle);
         Assert.Equal(CommerceOodaStatus.Completed, cycle.Status);
-        Assert.Equal("PURCHASE_AND_RECEIPT_CONFIRMED", cycle.Outcome);
+        Assert.Equal("GOAL_COMPLETED_PAYMENT_FULFILMENT_RECEIPT_PROVED", cycle.Outcome);
+        Assert.Contains("Fulfilment",cycle.ProofJson);
         Assert.NotEqual("[]", cycle.ObservationsJson);
         Assert.NotEqual("{}", cycle.ProofJson);
         Assert.Null(fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-other"));
@@ -174,6 +175,31 @@ public sealed class CommercePurchaseTests
         Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalAdapted");
         Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
         Assert.Equal(1, fixture.Payments.SubmissionCount);
+    }
+
+    [Fact]
+    public async Task GoalDoesNotCompleteWithoutPaymentReceiptAndFulfilmentEvidence()
+    {
+        var fixture=Build(70);fixture.Connector.IncludeFulfilmentEvidence=false;
+
+        var result=await fixture.Orchestrator.RunAsync("task-1","principal-1",
+            DateTimeOffset.Parse("2026-10-16T09:00:00Z"),fixture.Connector,new(false,false));
+
+        Assert.Equal(PurchaseExecutionState.Purchased,result.Execution.State);
+        Assert.NotNull(result.Receipt);
+        var cycle=fixture.OodaCycles.FindOwned(result.Execution.PurchaseIntentId,"principal-1")!;
+        Assert.Equal(CommerceOodaStatus.Verifying,cycle.Status);
+        Assert.NotEqual("GOAL_COMPLETED_PAYMENT_FULFILMENT_RECEIPT_PROVED",cycle.Outcome);
+
+        cycle=fixture.Orchestrator.RecordFulfilmentOutcome(result.Execution.PurchaseIntentId,"principal-1",
+            new("fulfilment-late",FulfilmentStatus.Accepted,"merchant-order",DateTimeOffset.UtcNow,
+                result.Execution.PurchaseIntentId,"GroceryDemo"));
+        Assert.Equal(CommerceOodaStatus.Completed,cycle.Status);
+        Assert.Equal("GOAL_COMPLETED_PAYMENT_FULFILMENT_RECEIPT_PROVED",cycle.Outcome);
+        Assert.Throws<UnauthorizedAccessException>(()=>fixture.Orchestrator.RecordFulfilmentOutcome(
+            result.Execution.PurchaseIntentId,"principal-other",
+            new("stolen",FulfilmentStatus.Delivered,"other-order",DateTimeOffset.UtcNow,
+                result.Execution.PurchaseIntentId,"GroceryDemo")));
     }
 
     [Fact]

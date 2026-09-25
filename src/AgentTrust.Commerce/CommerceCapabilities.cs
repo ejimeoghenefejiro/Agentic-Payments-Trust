@@ -69,8 +69,11 @@ public interface IMerchantPlanningToolset
 }
 
 public enum ConnectorPurchaseStatus { Succeeded, RequiresAction, Processing, Failed, Unknown }
+public sealed record CommerceFulfilmentEvidence(string FulfilmentId,FulfilmentStatus Status,
+    string ProviderReference,DateTimeOffset ObservedAt,string PurchaseIntentId,string ProviderId);
 public sealed record ConnectorPurchaseResult(ConnectorPurchaseStatus Status, string? ProviderReference,
-    string? RequiredAction, string? FailureReason, PurchaseReceipt? Receipt);
+    string? RequiredAction, string? FailureReason, PurchaseReceipt? Receipt,
+    CommerceFulfilmentEvidence? Fulfilment = null);
 public enum PlatformPaymentStatus { Succeeded, RequiresAction, Processing, Failed, Unknown }
 public sealed record PlatformPaymentResult(PlatformPaymentStatus Status, string? ProviderReference,
     string? RequiredAction, string? FailureReason);

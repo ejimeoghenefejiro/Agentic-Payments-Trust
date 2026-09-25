@@ -21,6 +21,8 @@ public sealed class ConsumerCommerceOperator
         if(!preparation.IsExecutable)throw new InvalidOperationException("OPERATOR_READINESS_REQUIRED");
         if(!preparation.Plan.ToolsUsed.Contains("auditor:accepted",StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("OPERATOR_AUDIT_ACCEPTANCE_REQUIRED");
+        if(!preparation.Plan.ToolsUsed.Contains("auditor:final-controls-accepted",StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("OPERATOR_FINAL_AUDIT_REQUIRED");
         var quote=preparation.Quote??throw new InvalidOperationException("OPERATOR_AUTHORITATIVE_QUOTE_REQUIRED");
         var expected=$"auditor:proposal-hash:{CommerceProposalFingerprint.Hash(preparation.Plan,quote)}";
         if(!preparation.Plan.ToolsUsed.Contains(expected,StringComparer.Ordinal))
