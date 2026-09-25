@@ -28,7 +28,7 @@ public sealed record ConsumerCommercePreparation(
 public sealed class ConsumerCommerceAgent
 {
     private readonly IConsumerPurchaseRequestAgent _planner;
-    private readonly ICommerceConnector _connector;
+    private readonly MerchantConnectorRegistry _connectors;
     private readonly IConsumerPlanningStore _planning;
     private readonly IMandateStore _mandates;
     private readonly IPaymentMethodStore _paymentMethods;
@@ -38,7 +38,7 @@ public sealed class ConsumerCommerceAgent
         IConsumerPlanningStore planning,IMandateStore mandates,IPaymentMethodStore paymentMethods,
         IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities)
     {
-        _planner=planner;_connector=connectors.All.Single();_planning=planning;_mandates=mandates;
+        _planner=planner;_connectors=connectors;_planning=planning;_mandates=mandates;
         _paymentMethods=paymentMethods;_objectiveCapabilities=objectiveCapabilities.ToArray();
     }
 
@@ -49,11 +49,16 @@ public sealed class ConsumerCommerceAgent
         if(plan.Status!=PurchasePlanningStatus.Ready)
             return new(plan,null,null,null,[]);
 
-        MerchantPlanningQuote quote;
+        MerchantPlanningQuote quote;ICommerceConnector selectedConnector;
         try
         {
-            var tools=new ConnectorMerchantPlanningToolset(_connector,context.PrincipalId,plan.Currency,_objectiveCapabilities);
-            quote=await tools.QuoteAsync(plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray(),cancellationToken);
+            var permittedMerchants=_mandates.FindByPrincipal(context.PrincipalId).Where(x=>x.IsActive(now)&&
+                string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase))
+                .Select(x=>x.Merchant).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var providers=_connectors.All.Where(x=>permittedMerchants.Contains(x.MerchantId)).ToArray();
+            var optimized=await new CommerceProviderOptimizer(_objectiveCapabilities).QuoteBestAsync(context.PrincipalId,providers,
+                plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray(),plan.MaximumAmount,plan.Currency,cancellationToken);
+            quote=optimized.BestQuote;selectedConnector=_connectors.GetRequired(quote.MerchantId);
         }
         catch(KeyNotFoundException ex)
         {
@@ -76,24 +81,29 @@ public sealed class ConsumerCommerceAgent
             EstimatedTotal=quote.Total,Message=$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Shall I go ahead?",
             Questions=plan.InteractionDecision==PurchaseInteractionDecision.Execute?[]:["Shall I go ahead?"]};
 
-        var catalogue=await _connector.SearchProductsAsync("",cancellationToken);
+        var catalogue=await selectedConnector.SearchProductsAsync("",cancellationToken);
         var holds=_planning.Reservations(plan.ConversationId!);
         if(holds.Count!=plan.Items.Count)return Failed(plan,"PRODUCT_RESERVATION_INCOMPLETE","The prepared products could not all be reserved.",quote,catalogue);
         foreach(var hold in holds)
         {
-            var current=await _connector.GetProductAsync(hold.ProductId,cancellationToken);
+            var current=await selectedConnector.GetProductAsync(hold.ProductId,cancellationToken);
             if(hold.ExpiresAt<=now||current is null||current.AvailableQuantity<hold.Quantity||current.UnitPrice!=hold.UnitPrice)
                 return Failed(plan,"PRODUCT_REVALIDATION_REQUIRED",$"{hold.ProductId} must be quoted again.",quote,catalogue);
         }
 
         var mandate=_mandates.FindByPrincipal(context.PrincipalId)
-            .Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,_connector.MerchantId,StringComparison.OrdinalIgnoreCase)&&
+            .Where(x=>x.IsActive(now)&&string.Equals(x.Merchant,quote.MerchantId,StringComparison.OrdinalIgnoreCase)&&
                       string.Equals(x.Currency,quote.Currency,StringComparison.OrdinalIgnoreCase)&&x.PerTransactionLimit>=quote.Total)
             .OrderBy(x=>x.PerTransactionLimit).FirstOrDefault();
         if(mandate is null)return Failed(plan,"NO_SUITABLE_ACTIVE_MANDATE","No active mandate covers the verified total.",quote,catalogue);
         var method=_paymentMethods.Find(mandate.PaymentMethodId);
         if(method is null||method.PrincipalId!=context.PrincipalId||!method.IsUsable(DateOnly.FromDateTime(now.UtcDateTime)))
             return Failed(plan,"NO_USABLE_PAYMENT_METHOD","The mandate does not have an owned, usable payment method.",quote,catalogue);
+        var auditTools=plan.ToolsUsed.Where(x=>!x.StartsWith("auditor:proposal-hash:",StringComparison.Ordinal)).ToList();
+        if(!auditTools.Contains("auditor:accepted",StringComparer.OrdinalIgnoreCase))auditTools.Add("auditor:accepted");
+        var auditedPlan=plan with{ToolsUsed=auditTools.ToArray()};
+        auditTools.Add($"auditor:proposal-hash:{CommerceProposalFingerprint.Hash(auditedPlan,quote)}");
+        plan=auditedPlan with{ToolsUsed=auditTools.ToArray()};
         return new(plan,quote,mandate,method,catalogue);
     }
 
@@ -102,7 +112,7 @@ public sealed class ConsumerCommerceAgent
         if(!prepared.IsExecutable)throw new InvalidOperationException("The purchase is not ready for execution.");
         var plan=prepared.Plan;var mandate=prepared.Mandate!;var method=prepared.PaymentMethod!;
         return new ConsumerPurchaseTask(StableTaskId(plan.ConversationId!),principalId,mandate.AgentId,
-            new HashSet<string>([_connector.MerchantId],StringComparer.OrdinalIgnoreCase),"OneOff","Europe/London",plan.MaximumAmount,plan.Currency,
+            new HashSet<string>([prepared.Quote!.MerchantId],StringComparer.OrdinalIgnoreCase),"OneOff","Europe/London",plan.MaximumAmount,plan.Currency,
             plan.Items.Select(x=>new ShoppingListItem(x.SearchTerm,x.Quantity,prepared.Catalogue.FirstOrDefault(p=>p.ProductId.Equals(x.SearchTerm,StringComparison.OrdinalIgnoreCase))?.ProductId)).ToList(),
             new PurchasePreference(mandate.TaskParameters.GetValueOrDefault("deliveryAddressReference")??"default-delivery-address",null,SubstitutionPolicy.SameOrLowerPrice,new Dictionary<string,string>{{"instruction",instruction}}),
             mandate.MandateId,method.PaymentMethodId,ConsumerTaskStatus.Active,now,now);

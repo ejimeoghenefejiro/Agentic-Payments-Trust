@@ -55,7 +55,8 @@ public sealed class DemoGroceryConnector : ICommerceConnector, IFulfilmentOption
     public async Task<ConnectorPurchaseResult> ExecutePurchaseAsync(PurchaseIntent intent, PurchaseAuthorisation authorisation, CancellationToken cancellationToken = default)
     {
         if (!_authorisations.Verify(intent, authorisation, DateTimeOffset.UtcNow)) throw new UnauthorizedAccessException("Purchase authorisation is invalid or does not match the intent.");
-        lock (_gate) if (_purchases.TryGetValue(intent.IdempotencyKey, out var existing)) return existing;
+        lock (_gate) if (_purchases.TryGetValue(intent.IdempotencyKey, out var existing)
+            && existing.Status != ConnectorPurchaseStatus.Unknown) return existing;
         PlatformPaymentResult payment;
         _durability.BeginPaymentSubmission(intent, _payments.ProviderName);
         try
@@ -101,9 +102,10 @@ public sealed class MockPlatformPaymentProcessor : IPlatformPaymentProcessor
 {
     private readonly object _gate = new(); private readonly Dictionary<string, PlatformPaymentResult> _results = new();
     public int SubmissionCount { get; private set; } public PlatformPaymentStatus NextStatus { get; set; } = PlatformPaymentStatus.Succeeded;
+    public bool LoseNextResponseAfterAcceptance { get; set; }
     public string ProviderName => "Mock";
     public Task<PlatformPaymentResult> ProcessAsync(PurchaseIntent intent, CancellationToken cancellationToken = default)
-    { lock (_gate) { if (_results.TryGetValue(intent.IdempotencyKey, out var existing)) return Task.FromResult(existing); SubmissionCount++; var result = new PlatformPaymentResult(NextStatus, $"demo_pay_{intent.PurchaseIntentId}", NextStatus == PlatformPaymentStatus.RequiresAction ? "demo_client_secret" : null, NextStatus == PlatformPaymentStatus.Failed ? "SIMULATED_DECLINE" : null); _results[intent.IdempotencyKey] = result; return Task.FromResult(result); } }
+    { lock (_gate) { if (_results.TryGetValue(intent.IdempotencyKey, out var existing)) return Task.FromResult(existing); SubmissionCount++; var result = new PlatformPaymentResult(NextStatus, $"demo_pay_{intent.PurchaseIntentId}", NextStatus == PlatformPaymentStatus.RequiresAction ? "demo_client_secret" : null, NextStatus == PlatformPaymentStatus.Failed ? "SIMULATED_DECLINE" : null); _results[intent.IdempotencyKey] = result; if(LoseNextResponseAfterAcceptance){LoseNextResponseAfterAcceptance=false;throw new TimeoutException("The provider accepted the request but its response was lost.");} return Task.FromResult(result); } }
     public Task<PlatformRefundResult> RefundAsync(string paymentReference, decimal amount, string currency, string idempotencyKey, CancellationToken cancellationToken = default) =>
         Task.FromResult(new PlatformRefundResult(PlatformRefundStatus.Succeeded, $"demo_refund_{paymentReference}", null));
 }

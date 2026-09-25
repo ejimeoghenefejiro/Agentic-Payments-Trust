@@ -352,6 +352,57 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.ToTable("CommerceOodaCycles");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.CommerceOodaStepEntity", b =>
+                {
+                    b.Property<string>("StepId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CycleId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("CycleNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DecisionReason")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OutputJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.HasKey("StepId");
+
+                    b.HasIndex("PrincipalId", "CreatedAt");
+
+                    b.HasIndex("CycleId", "CycleNumber", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("CommerceOodaSteps");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.ConnectedServiceEntity", b =>
                 {
                     b.Property<string>("Id")

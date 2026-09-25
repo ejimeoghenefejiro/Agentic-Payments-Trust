@@ -30,6 +30,15 @@ public sealed class InMemoryMandateUsageTracker : IMandateUsageTracker
     {
         lock (_gate)
         {
+            var existing = _reservations.Values.FirstOrDefault(r => r.ExecutionId == executionId
+                && r.MandateId == mandate.MandateId && r.Amount == amount
+                && r.Status == SpendReservationStatus.Reserved);
+            if (existing is not null)
+            {
+                reservation = existing;
+                reasons = Array.Empty<string>();
+                return true;
+            }
             var failures = new List<string>();
             if (amount <= 0) failures.Add("AMOUNT_MUST_BE_POSITIVE");
             if (_reservations.Values.Any(r => r.ExecutionId == executionId && r.Status != SpendReservationStatus.Released))

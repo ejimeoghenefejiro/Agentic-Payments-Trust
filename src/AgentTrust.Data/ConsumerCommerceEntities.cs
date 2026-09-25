@@ -313,6 +313,13 @@ public sealed class CommerceOodaCycleEntity
     public DateTimeOffset UpdatedAt { get; set; }
     public long Version { get; set; } = 1;
 }
+public sealed class CommerceOodaStepEntity
+{
+    public string StepId{get;set;}="";public string CycleId{get;set;}="";public string PrincipalId{get;set;}="";
+    public int CycleNumber{get;set;}public int Sequence{get;set;}public string Phase{get;set;}="";
+    public string InputJson{get;set;}="{}";public string OutputJson{get;set;}="{}";public string EvidenceJson{get;set;}="{}";
+    public string? DecisionReason{get;set;}public DateTimeOffset CreatedAt{get;set;}
+}
 
 public sealed class ConsumerPlanningConversationEntity
 {

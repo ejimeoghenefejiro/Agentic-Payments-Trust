@@ -62,7 +62,7 @@ public sealed class CommercePurchaseTests
         var cycle = fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-1");
         Assert.NotNull(cycle);
         Assert.Equal(CommerceOodaStatus.Completed, cycle.Status);
-        Assert.Equal("GOAL_VERIFIED", cycle.Outcome);
+        Assert.Equal("PURCHASE_AND_RECEIPT_CONFIRMED", cycle.Outcome);
         Assert.NotEqual("[]", cycle.ObservationsJson);
         Assert.NotEqual("{}", cycle.ProofJson);
         Assert.Null(fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-other"));
@@ -86,6 +86,50 @@ public sealed class CommercePurchaseTests
         Assert.Equal(1, fixture.Payments.SubmissionCount);
         Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
         Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalChecked");
+    }
+
+    [Fact]
+    public async Task PaymentTimeoutResumesSameOodaCycleWithoutASecondCharge()
+    {
+        var fixture = Build(maximum: 70);
+        fixture.Payments.LoseNextResponseAfterAcceptance = true;
+        var scheduled = DateTimeOffset.Parse("2026-10-02T09:00:00Z");
+
+        await Assert.ThrowsAsync<TimeoutException>(() => fixture.Orchestrator.RunAsync(
+            "task-1", "principal-1", scheduled, fixture.Connector, new(false, false)));
+        var recovered = await fixture.Restart().RunAsync(
+            "task-1", "principal-1", scheduled, fixture.Connector, new(false, false));
+
+        Assert.Equal(PurchaseExecutionState.Purchased, recovered.Execution.State);
+        Assert.Equal(1, fixture.Payments.SubmissionCount);
+        var cycle = fixture.OodaCycles.FindOwned(recovered.Execution.PurchaseIntentId, "principal-1")!;
+        Assert.Equal(2, cycle.CycleNumber);
+        Assert.Equal(CommerceOodaStatus.Completed, cycle.Status);
+        Assert.Contains(fixture.OodaCycles.StepsOwned(cycle.CycleId, "principal-1"),
+            step => step.CycleNumber == 1 && step.Phase == CommerceOodaStatus.Failed);
+        Assert.Contains(fixture.OodaCycles.StepsOwned(cycle.CycleId, "principal-1"),
+            step => step.CycleNumber == 2 && step.Phase == CommerceOodaStatus.Completed);
+    }
+
+    [Fact]
+    public async Task RejectedSubstitutionIsAvoidedOnTheNextRecurringOrder()
+    {
+        var memory = new ConsumerMemoryService(new InMemoryConsumerMemoryStore());
+        memory.Remember("principal-1", ConsumerMemoryKind.Correction, ConsumerMemoryPolarity.Negative,
+            "value milk", "Do not buy value milk again", "explicit-user-correction");
+        var catalogue = new[]
+        {
+            new Product("usual-milk", "Usual milk", 1.20m, "GBP", 0, new HashSet<string>{"milk"}),
+            new Product("value-milk", "Value milk", 1.00m, "GBP", 20, new HashSet<string>{"milk"}),
+            new Product("other-milk", "Other milk", 1.10m, "GBP", 20, new HashSet<string>{"milk"})
+        };
+        var fixture = Build(70, catalogue: catalogue, preferredProductId: "usual-milk", memory: memory);
+
+        var result = await fixture.Orchestrator.RunAsync("task-1", "principal-1",
+            DateTimeOffset.Parse("2026-10-09T09:00:00Z"), fixture.Connector, new(false, false));
+
+        Assert.Equal(PurchaseExecutionState.Purchased, result.Execution.State);
+        Assert.Equal("other-milk", Assert.Single(result.Intent!.BasketItems).ProductId);
     }
 
     [Fact]
@@ -239,7 +283,7 @@ public sealed class CommercePurchaseTests
     private static Fixture Build(decimal maximum, MandateStatus status = MandateStatus.Active,
         LivePurchaseOptions? live = null,decimal taskBudget=70,IEnumerable<Product>? catalogue=null,
         string? preferredProductId=null,SubstitutionPolicy substitutionPolicy=SubstitutionPolicy.SameOrLowerPrice,
-        IReadOnlyList<ShoppingListItem>? shoppingList=null)
+        IReadOnlyList<ShoppingListItem>? shoppingList=null,IConsumerMemoryService? memory=null)
     {
         var now = DateTimeOffset.UtcNow; var agents = new InMemoryAgentRegistry(); var bindings = new InMemoryPrincipalBindingStore();
         var authorities = new InMemoryDelegatedAuthorityStore();
@@ -259,12 +303,15 @@ public sealed class CommercePurchaseTests
         var auth = new HmacPurchaseAuthorisationService(RandomNumberGenerator.GetBytes(32)); var payments = new MockPlatformPaymentProcessor();
         var connector = new DemoGroceryConnector(auth, payments, catalogue); var audit = new InMemoryPurchaseAuditSink();
         var oodaCycles = new InMemoryCommerceOodaCycleStore();
-        var orchestrator = new AgentPurchaseOrchestrator(tasks, executions, mandates, usage, methods, authorities,
-            trust, auth, audit, new LivePurchaseGate(live ?? new LivePurchaseOptions()), new InMemoryOneOffAuthorisationStore(), null, oodaCycles);
-        return new Fixture(orchestrator, connector, payments, audit, mandates, methods, oodaCycles);
+        var durability=new InMemoryCommerceDurability();
+        AgentPurchaseOrchestrator CreateOrchestrator()=>new(tasks, executions, mandates, usage, methods, authorities,
+            trust, auth, audit, new LivePurchaseGate(live ?? new LivePurchaseOptions()),
+            new InMemoryOneOffAuthorisationStore(), durability, oodaCycles, memory);
+        var orchestrator = CreateOrchestrator();
+        return new Fixture(orchestrator, connector, payments, audit, mandates, methods, oodaCycles,CreateOrchestrator);
     }
     private sealed record Fixture(AgentPurchaseOrchestrator Orchestrator, DemoGroceryConnector Connector,
         MockPlatformPaymentProcessor Payments, InMemoryPurchaseAuditSink Audit,
         InMemoryMandateStore Mandates, InMemoryPaymentMethodStore PaymentMethods,
-        InMemoryCommerceOodaCycleStore OodaCycles);
+        InMemoryCommerceOodaCycleStore OodaCycles,Func<AgentPurchaseOrchestrator> Restart);
 }

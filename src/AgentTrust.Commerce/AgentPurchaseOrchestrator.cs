@@ -32,6 +32,7 @@ public sealed class AgentPurchaseOrchestrator
     private readonly ICommerceDurability _durability;
     private readonly CommerceGoalLoop _goalLoop = new();
     private readonly ICommerceOodaCycleStore _oodaCycles;
+    private readonly IConsumerMemoryService? _memory;
     private readonly object _gate = new();
     private readonly Dictionary<string, PendingPurchase> _pending = new();
     private readonly Dictionary<string, string> _intentHashes = new();
@@ -44,13 +45,13 @@ public sealed class AgentPurchaseOrchestrator
         IDelegatedAuthorityStore authorities, TrustFramework trust,
         IPurchaseAuthorisationService authorisations, IPurchaseAuditSink audit, LivePurchaseGate liveGate,
         IOneOffAuthorisationStore? oneOffs = null, ICommerceDurability? durability = null,
-        ICommerceOodaCycleStore? oodaCycles = null)
+        ICommerceOodaCycleStore? oodaCycles = null,IConsumerMemoryService? memory=null)
     { _tasks = tasks; _executions = executions; _mandates = mandates; _usage = usage;
       _paymentMethods = paymentMethods; _authorities = authorities; _trust = trust;
       _authorisations = authorisations; _audit = audit; _liveGate = liveGate;
       _oneOffs = oneOffs ?? new InMemoryOneOffAuthorisationStore();
       _durability = durability ?? new NullCommerceDurability();
-      _oodaCycles = oodaCycles ?? new InMemoryCommerceOodaCycleStore(); }
+      _oodaCycles = oodaCycles ?? new InMemoryCommerceOodaCycleStore();_memory=memory; }
 
     public async Task<PurchaseOrchestrationResult> RunAsync(string taskId, string authenticatedPrincipalId,
         DateTimeOffset scheduledFor, ICommerceConnector connector, LiveExecutionContext liveContext,
@@ -59,19 +60,26 @@ public sealed class AgentPurchaseOrchestrator
         var task = _tasks.FindOwned(taskId, authenticatedPrincipalId)
             ?? throw new UnauthorizedAccessException("Task does not belong to the authenticated principal.");
         var intentId = StableIntentId(task.TaskId, scheduledFor);
+        PurchaseExecution? previousExecution;
         lock (_gate)
         {
-            if (_executions.FindByIntent(intentId) is { } existing)
-                return new PurchaseOrchestrationResult(existing, null, null, null);
-            Save(NewExecution(intentId, task, PurchaseExecutionState.BasketBuilding));
+            previousExecution=_executions.FindByIntent(intentId);
+            if(previousExecution is not null&&previousExecution.State is not(PurchaseExecutionState.Failed or PurchaseExecutionState.Unknown))
+                return new PurchaseOrchestrationResult(previousExecution, null, null, null);
+            if(previousExecution is null)Save(NewExecution(intentId, task, PurchaseExecutionState.BasketBuilding));
+            else Save(previousExecution with{State=PurchaseExecutionState.BasketBuilding,Reasons=[],UpdatedAt=DateTimeOffset.UtcNow});
         }
         Audit("TaskTriggered", intentId, task.PrincipalId, null);
 
-        var ooda = _oodaCycles.FindOwned(intentId, task.PrincipalId) ?? new CommerceOodaCycle(
+        var priorCycle=_oodaCycles.FindOwned(intentId,task.PrincipalId);
+        var ooda = priorCycle is null ? new CommerceOodaCycle(
             $"ooda_{intentId}", task.TaskId, task.PrincipalId, intentId, scheduledFor, 1,
             CommerceOodaStatus.Observing, "[]", "[]", "[]", "{}", "{}", "{}", null,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            :priorCycle with{CycleNumber=priorCycle.CycleNumber+1,Status=CommerceOodaStatus.Observing,
+                Outcome=null,UpdatedAt=DateTimeOffset.UtcNow,Version=priorCycle.Version+1};
         SaveOoda(ooda);
+        AppendOodaStep(ooda,CommerceOodaStatus.Observing,"{}","{}","{}",previousExecution is null?"INITIAL_EXECUTION":"RECOVERY_REOBSERVATION");
 
         try
         {
@@ -88,6 +96,12 @@ public sealed class AgentPurchaseOrchestrator
                 return Denied(intentId, task, "PAYMENT_METHOD_OWNERSHIP_MISMATCH");
             if (!method.IsUsable(DateOnly.FromDateTime(DateTime.UtcNow))) return Denied(intentId, task, "PAYMENT_METHOD_INACTIVE");
 
+            if (previousExecution?.State == PurchaseExecutionState.Unknown
+                && _durability.FindIntentOwned(intentId, task.PrincipalId) is { } recoveryIntent
+                && _durability.FindAuthorisationOwned(intentId, task.PrincipalId) is { } recoveryAuthorisation)
+                return await RecoverUnknownPaymentAsync(task, mandate, recoveryIntent, recoveryAuthorisation,
+                    connector, ooda, cancellationToken);
+
             Audit("GoalObserved", intentId, task.PrincipalId, null);
             var goals = task.ShoppingList.Select((requested, index) => new CommerceGoal(
                 $"{task.TaskId}:{index}", requested.SearchTerm, requested.Quantity,
@@ -100,7 +114,13 @@ public sealed class AgentPurchaseOrchestrator
             var observations = new List<object>();
             foreach (var goal in goals)
             {
-                var outcome = await _goalLoop.SatisfyAsync(goal, basket, connector, cancellationToken);
+                var rejectedTerms = _memory is null
+                    ? []
+                    : (await _memory.RetrieveAsync(task.PrincipalId, goal.SearchTerm, cancellationToken: cancellationToken))
+                        .Where(match => match.Memory.Polarity == ConsumerMemoryPolarity.Negative)
+                        .Select(match => match.Memory.Subject)
+                        .ToArray();
+                var outcome = await _goalLoop.SatisfyAsync(goal, basket, connector, cancellationToken, rejectedTerms);
                 observations.Add(new { goal.GoalId, goal.SearchTerm, Alternatives = outcome.ObservedAlternatives.Select(x => new { x.ProductId, x.Description, x.UnitPrice, x.AvailableQuantity }) });
                 if (outcome.Proof is null)
                 {
@@ -138,7 +158,7 @@ public sealed class AgentPurchaseOrchestrator
                 AdvanceOoda(ooda, CommerceOodaStatus.NeedsIntervention, outcome: string.Join(',', goalCheck.Failures));
                 return Denied(intentId, task, goalCheck.Failures);
             }
-            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Completed, outcome: "GOAL_VERIFIED");
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.ProposalVerified, outcome: "PROPOSAL_VERIFIED");
             Audit("GoalProved", intentId, task.PrincipalId, null);
             Audit("GoalChecked", intentId, task.PrincipalId, null);
             var intent = new PurchaseIntent(intentId, task.PrincipalId, task.AgentId, task.MandateId, task.TaskId,
@@ -170,8 +190,10 @@ public sealed class AgentPurchaseOrchestrator
                 Audit("TrustEscalated", intentId, task.PrincipalId, null); Audit("HumanApprovalRequested", intentId, task.PrincipalId, null);
                 return Current(intentId, intent);
             }
-            return await EvaluateAndExecute(intent, task, mandate, connector, reservation!.ReservationId,
+            var result=await EvaluateAndExecute(intent, task, mandate, connector, reservation!.ReservationId,
                 null, cancellationToken);
+            FinaliseOoda(result,ooda);
+            return result;
         }
         catch (Exception exception)
         {
@@ -192,7 +214,7 @@ public sealed class AgentPurchaseOrchestrator
         {var task=_tasks.FindOwned(durable.Intent.TaskId,authenticatedPrincipalId)??throw new UnauthorizedAccessException();var mandate=_mandates.FindVersion(durable.Intent.MandateId,durable.MandateVersion)??throw new InvalidOperationException("Mandate version missing.");pending=new PendingPurchase(durable.Intent,task,mandate,recoveryConnector??throw new InvalidOperationException("Commerce connector required for durable recovery."),durable.Fingerprint,durable.ReservationId,DateTimeOffset.UtcNow,new(false,false));}
         if(pending is null)throw new InvalidOperationException("No pending purchase.");
         if (pending.Task.PrincipalId != authenticatedPrincipalId) throw new UnauthorizedAccessException("Purchase does not belong to the authenticated principal.");
-        if (!approve) { _durability.CompletePending(purchaseIntentId,false,approver);_usage.Release(pending.ReservationId); Update(purchaseIntentId, PurchaseExecutionState.Denied, ["HUMAN_REJECTED"]); return Current(purchaseIntentId, pending.Intent); }
+        if (!approve) { _durability.CompletePending(purchaseIntentId,false,approver);_usage.Release(pending.ReservationId); Update(purchaseIntentId, PurchaseExecutionState.Denied, ["HUMAN_REJECTED"]);var denied=Current(purchaseIntentId,pending.Intent);if(_oodaCycles.FindOwned(purchaseIntentId,authenticatedPrincipalId)is{} rejectedCycle)AdvanceOoda(rejectedCycle,CommerceOodaStatus.NeedsIntervention,outcome:"HUMAN_REJECTED");return denied; }
         var oneOff = new OneOffAuthorisation($"ooa_{Guid.NewGuid():N}", purchaseIntentId, pending.Mandate.MandateId,
             pending.Mandate.Version, pending.Fingerprint, pending.Intent.TotalAmount, pending.Intent.Currency,
             pending.Intent.MerchantId, pending.Intent.PaymentMethodReference, approver, DateTimeOffset.UtcNow,
@@ -202,8 +224,10 @@ public sealed class AgentPurchaseOrchestrator
             return Denied(purchaseIntentId, pending.Task, "ONE_OFF_AUTHORISATION_INVALID");
         _durability.CompletePending(purchaseIntentId,true,approver);
         Audit("HumanApprovalGranted", purchaseIntentId, authenticatedPrincipalId, null);
-        return await EvaluateAndExecute(pending.Intent, pending.Task, pending.Mandate, pending.Connector,
+        var result=await EvaluateAndExecute(pending.Intent, pending.Task, pending.Mandate, pending.Connector,
             pending.ReservationId, pending.Intent.TotalAmount, cancellationToken);
+        if(_oodaCycles.FindOwned(purchaseIntentId,authenticatedPrincipalId)is{} cycle)FinaliseOoda(result,cycle);
+        return result;
     }
 
     private async Task<PurchaseOrchestrationResult> EvaluateAndExecute(PurchaseIntent intent,
@@ -249,6 +273,37 @@ public sealed class AgentPurchaseOrchestrator
         return new PurchaseOrchestrationResult(_executions.FindByIntent(intent.PurchaseIntentId)!, intent, auth, result.Receipt);
     }
 
+    private async Task<PurchaseOrchestrationResult> RecoverUnknownPaymentAsync(ConsumerPurchaseTask task,
+        FinancialMandate mandate,PurchaseIntent intent,PurchaseAuthorisation authorisation,
+        ICommerceConnector connector,CommerceOodaCycle cycle,CancellationToken cancellationToken)
+    {
+        if (!_usage.TryReserve(mandate,intent.PurchaseIntentId,intent.TotalAmount,DateTimeOffset.UtcNow,
+            out var reservation,out var reasons))
+            return Denied(intent.PurchaseIntentId,task,reasons.ToArray(),intent);
+
+        Audit("PaymentReconciliationStarted",intent.PurchaseIntentId,task.PrincipalId,authorisation.TransactionId);
+        var providerResult=await connector.ExecutePurchaseAsync(intent,authorisation,cancellationToken);
+        var state=providerResult.Status switch
+        {
+            ConnectorPurchaseStatus.Succeeded=>PurchaseExecutionState.Purchased,
+            ConnectorPurchaseStatus.RequiresAction=>PurchaseExecutionState.RequiresAction,
+            ConnectorPurchaseStatus.Processing=>PurchaseExecutionState.Processing,
+            ConnectorPurchaseStatus.Failed=>PurchaseExecutionState.Failed,
+            _=>PurchaseExecutionState.Unknown
+        };
+        if(state==PurchaseExecutionState.Purchased)_usage.Commit(reservation!.ReservationId);
+        else if(state==PurchaseExecutionState.Failed)_usage.Release(reservation!.ReservationId);
+        Update(intent.PurchaseIntentId,state,providerResult.FailureReason is null?[]:[providerResult.FailureReason],
+            providerResult.ProviderReference,providerResult.RequiredAction,authorisation.TransactionId);
+        if(providerResult.Receipt is not null)_durability.SaveReceipt(providerResult.Receipt,task.PrincipalId);
+        var result=new PurchaseOrchestrationResult(_executions.FindByIntent(intent.PurchaseIntentId)!,intent,
+            authorisation,providerResult.Receipt);
+        Audit(state==PurchaseExecutionState.Purchased?"PaymentReconciled":"PaymentReconciliationPending",
+            intent.PurchaseIntentId,task.PrincipalId,authorisation.TransactionId);
+        FinaliseOoda(result,cycle);
+        return result;
+    }
+
     private PurchaseOrchestrationResult Denied(string id, ConsumerPurchaseTask task, string reason, PurchaseIntent? intent = null) => Denied(id, task, [reason], intent);
     private PurchaseOrchestrationResult Denied(string id, ConsumerPurchaseTask task, IReadOnlyList<string> reasons, PurchaseIntent? intent = null)
     { Update(id, PurchaseExecutionState.Denied, reasons); Audit("TrustDenied", id, task.PrincipalId, null); return Current(id, intent); }
@@ -284,9 +339,30 @@ public sealed class AgentPurchaseOrchestrator
             Version = cycle.Version + 1
         };
         SaveOoda(updated);
+        AppendOodaStep(updated,status,goal??decision??action??"{}",outcome??"{}",proof??observations??alternatives??"{}",outcome);
         return updated;
     }
     private void SaveOoda(CommerceOodaCycle cycle) => _oodaCycles.Save(cycle);
+    private void AppendOodaStep(CommerceOodaCycle cycle,CommerceOodaStatus phase,string input,string output,string evidence,string? reason)
+    {
+        var sequence=_oodaCycles.StepsOwned(cycle.CycleId,cycle.PrincipalId).Count(x=>x.CycleNumber==cycle.CycleNumber)+1;
+        _oodaCycles.Append(new($"ooda_step_{Guid.NewGuid():N}",cycle.CycleId,cycle.PrincipalId,cycle.CycleNumber,
+            sequence,phase,input,output,evidence,reason,DateTimeOffset.UtcNow));
+    }
+    private void FinaliseOoda(PurchaseOrchestrationResult result,CommerceOodaCycle cycle)
+    {
+        var completed=result.Execution.State==PurchaseExecutionState.Purchased;
+        AdvanceOoda(cycle,completed?CommerceOodaStatus.Completed:CommerceOodaStatus.Verifying,
+            proof:JsonSerializer.Serialize(new{result.Execution.State,result.Execution.ProviderReference,Receipt=result.Receipt?.ReceiptId}),
+            outcome:completed?"PURCHASE_AND_RECEIPT_CONFIRMED":result.Execution.State.ToString());
+        if(completed&&_memory is not null)
+        {
+            foreach(var proof in JsonSerializer.Deserialize<CommerceGoalProof[]>(cycle.DecisionJson)??[])
+                if(proof.Substituted)_memory.Remember(cycle.PrincipalId,ConsumerMemoryKind.Substitution,
+                    ConsumerMemoryPolarity.Positive,proof.ProductId,$"Accepted substitute {proof.ProductId}",
+                    "verified-purchase-outcome",purchaseIntentId:cycle.PurchaseIntentId,confidence:.9);
+        }
+    }
     private static string StableIntentId(string task, DateTimeOffset scheduled) => "purchase_" + Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes($"{task}|{scheduled:O}"))).ToLowerInvariant()[..32];
 }

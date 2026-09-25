@@ -6,6 +6,7 @@ public interface ICommerceDurability
 {
     void SaveIntent(PurchaseIntent intent, string executionId, int mandateVersion);
     void SaveAuthorisation(PurchaseAuthorisation authorisation);
+    PurchaseAuthorisation? FindAuthorisationOwned(string purchaseIntentId, string principalId);
     void SaveCheckout(PurchaseIntent intent, string status);
     void BeginPaymentSubmission(PurchaseIntent intent, string provider);
     void RecordPaymentResult(PurchaseIntent intent, PlatformPaymentResult result);
@@ -23,6 +24,7 @@ public sealed class NullCommerceDurability : ICommerceDurability
 {
     public void SaveIntent(PurchaseIntent intent, string executionId, int mandateVersion) { }
     public void SaveAuthorisation(PurchaseAuthorisation authorisation) { }
+    public PurchaseAuthorisation? FindAuthorisationOwned(string purchaseIntentId,string principalId)=>null;
     public void SaveCheckout(PurchaseIntent intent, string status) { }
     public void BeginPaymentSubmission(PurchaseIntent intent, string provider) { }
     public void RecordPaymentResult(PurchaseIntent intent, PlatformPaymentResult result) { }
@@ -41,8 +43,10 @@ public sealed class InMemoryCommerceDurability : ICommerceDurability
     private readonly object _gate=new();private readonly Dictionary<string,PurchaseReceipt> _receipts=new();
     private readonly Dictionary<string,string> _owners=new();private readonly Dictionary<string,PurchaseIntent> _intents=new();private readonly Dictionary<string,DurablePendingPurchase> _pending=new();
     private readonly Dictionary<string,(string Status,int Submissions,string? ProviderPaymentId)> _payments=new();
+    private readonly Dictionary<string,PurchaseAuthorisation> _authorisations=new();
     public void SaveIntent(PurchaseIntent intent,string executionId,int mandateVersion){lock(_gate){_owners[intent.PurchaseIntentId]=intent.PrincipalId;_intents[intent.PurchaseIntentId]=intent;}}
-    public void SaveAuthorisation(PurchaseAuthorisation authorisation){}
+    public void SaveAuthorisation(PurchaseAuthorisation authorisation){lock(_gate)_authorisations[authorisation.PurchaseIntentId]=authorisation;}
+    public PurchaseAuthorisation? FindAuthorisationOwned(string id,string principal){lock(_gate)return _authorisations.GetValueOrDefault(id)is{} value&&value.PrincipalId==principal?value:null;}
     public void SaveCheckout(PurchaseIntent intent,string status){}
     public void BeginPaymentSubmission(PurchaseIntent intent,string provider){lock(_gate){var current=_payments.GetValueOrDefault(intent.IdempotencyKey);_payments[intent.IdempotencyKey]=(current.Status??"Submitted",current.Submissions+1,current.ProviderPaymentId);}}
     public void RecordPaymentResult(PurchaseIntent intent,PlatformPaymentResult result){lock(_gate)_payments[intent.IdempotencyKey]=(result.Status.ToString(),Math.Max(1,_payments.GetValueOrDefault(intent.IdempotencyKey).Submissions),result.ProviderReference);}

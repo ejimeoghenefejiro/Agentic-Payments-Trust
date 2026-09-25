@@ -42,6 +42,8 @@ public class PersistenceTests : IDisposable
             1, CommerceOodaStatus.Completed, "[{\"goalId\":\"meal\"}]", "[{\"stock\":2}]",
             "[{\"productId\":\"value-item\"}]", "{\"selected\":\"value-item\"}",
             "{\"quoteId\":\"quote_1\"}", "{\"passed\":true}", "GOAL_VERIFIED", now, now));
+        store.Append(new CommerceOodaStep("step_1", "ooda_1", "principal_1", 1, 1,
+            CommerceOodaStatus.Observing, "{}", "{}", "{\"stock\":2}", null, now));
 
         var reloaded = new EfCommerceOodaCycleStore(new AgentTrustDbContext(
             new DbContextOptionsBuilder<AgentTrustDbContext>().UseSqlite(_connection).Options));
@@ -52,6 +54,8 @@ public class PersistenceTests : IDisposable
         Assert.Contains("value-item", cycle.AlternativesJson);
         Assert.Contains("passed", cycle.ProofJson);
         Assert.Null(reloaded.FindOwned("purchase_1", "principal_2"));
+        Assert.Single(reloaded.StepsOwned("ooda_1", "principal_1"));
+        Assert.Empty(reloaded.StepsOwned("ooda_1", "principal_2"));
     }
 
     [Fact]

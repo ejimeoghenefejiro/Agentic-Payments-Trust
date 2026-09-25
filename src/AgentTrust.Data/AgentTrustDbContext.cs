@@ -58,6 +58,7 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<FulfilmentWebhookEventEntity> FulfilmentWebhookEvents => Set<FulfilmentWebhookEventEntity>();
     public DbSet<FulfilmentCancellationEntity> FulfilmentCancellations => Set<FulfilmentCancellationEntity>();
     public DbSet<CommerceOodaCycleEntity> CommerceOodaCycles => Set<CommerceOodaCycleEntity>();
+    public DbSet<CommerceOodaStepEntity> CommerceOodaSteps => Set<CommerceOodaStepEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -196,6 +197,12 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasIndex(x => x.PurchaseIntentId).IsUnique();
             b.HasIndex(x => new { x.PrincipalId, x.UpdatedAt });
             b.HasIndex(x => new { x.Status, x.UpdatedAt });
+        });
+        modelBuilder.Entity<CommerceOodaStepEntity>(b =>
+        {
+            b.HasKey(x=>x.StepId);
+            b.HasIndex(x=>new{x.CycleId,x.CycleNumber,x.Sequence}).IsUnique();
+            b.HasIndex(x=>new{x.PrincipalId,x.CreatedAt});
         });
 
         Configure<PurchaseExecutionEntity>(modelBuilder, x => x.ExecutionId);

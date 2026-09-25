@@ -27,7 +27,10 @@ public sealed record CommerceGoalCheck(
     IReadOnlyList<CommerceGoalProof> Proofs,
     IReadOnlyList<string> Failures);
 
-public enum CommerceOodaStatus { Observing, Orienting, Deciding, Acting, Verifying, Completed, NeedsIntervention, Failed }
+public enum CommerceOodaStatus { Observing, Orienting, Deciding, Acting, ProposalVerified, Verifying, Completed, NeedsIntervention, Failed }
+
+public sealed record CommerceOodaStep(string StepId,string CycleId,string PrincipalId,int CycleNumber,int Sequence,
+    CommerceOodaStatus Phase,string InputJson,string OutputJson,string EvidenceJson,string? DecisionReason,DateTimeOffset CreatedAt);
 
 public sealed record CommerceOodaCycle(
     string CycleId,
@@ -52,6 +55,8 @@ public interface ICommerceOodaCycleStore
 {
     CommerceOodaCycle? FindOwned(string purchaseIntentId, string principalId);
     IReadOnlyList<CommerceOodaCycle> FindByTaskOwned(string taskId, string principalId);
+    IReadOnlyList<CommerceOodaStep> StepsOwned(string cycleId,string principalId);
+    void Append(CommerceOodaStep step);
     void Save(CommerceOodaCycle cycle);
 }
 
@@ -59,6 +64,7 @@ public sealed class InMemoryCommerceOodaCycleStore : ICommerceOodaCycleStore
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, CommerceOodaCycle> _cycles = new();
+    private readonly List<CommerceOodaStep> _steps = [];
     public CommerceOodaCycle? FindOwned(string purchaseIntentId, string principalId)
     {
         lock (_gate) return _cycles.Values.SingleOrDefault(cycle =>
@@ -74,6 +80,10 @@ public sealed class InMemoryCommerceOodaCycleStore : ICommerceOodaCycleStore
             .Where(cycle => cycle.TaskId == taskId && cycle.PrincipalId == principalId)
             .OrderByDescending(cycle => cycle.ScheduledFor).ToArray();
     }
+    public IReadOnlyList<CommerceOodaStep> StepsOwned(string cycleId,string principalId)
+    {lock(_gate)return _steps.Where(x=>x.CycleId==cycleId&&x.PrincipalId==principalId).OrderBy(x=>x.CycleNumber).ThenBy(x=>x.Sequence).ToArray();}
+    public void Append(CommerceOodaStep step)
+    {lock(_gate)if(_steps.All(x=>x.StepId!=step.StepId))_steps.Add(step);}
 }
 
 public sealed record CommerceGoalAttempt(
@@ -91,7 +101,8 @@ public sealed class CommerceGoalLoop
         CommerceGoal goal,
         Basket basket,
         ICommerceConnector connector,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? excludedProductTerms = null)
     {
         // Observe: obtain current provider inventory, not remembered catalogue data.
         var observed = await connector.SearchProductsAsync(goal.SearchTerm, cancellationToken);
@@ -105,6 +116,7 @@ public sealed class CommerceGoalLoop
             : null;
         var eligible = observed
             .Where(product => product.AvailableQuantity >= goal.Quantity)
+            .Where(product => !IsExcluded(product, excludedProductTerms))
             .Where(product => goal.MaximumUnitPrice is null || product.UnitPrice <= goal.MaximumUnitPrice)
             .Where(product => substitutionPriceCeiling is null
                 || product.ProductId.Equals(goal.PreferredProductId, StringComparison.OrdinalIgnoreCase)
@@ -149,6 +161,16 @@ public sealed class CommerceGoalLoop
         }
 
         return new CommerceGoalAttempt(basket, null, observed);
+    }
+
+    private static bool IsExcluded(Product product, IReadOnlyCollection<string>? excludedTerms)
+    {
+        if (excludedTerms is null || excludedTerms.Count == 0) return false;
+        return excludedTerms.Any(term =>
+            !string.IsNullOrWhiteSpace(term) &&
+            (product.ProductId.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+             product.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+             product.Tags.Any(tag => tag.Contains(term, StringComparison.OrdinalIgnoreCase))));
     }
 
     public CommerceGoalCheck Check(

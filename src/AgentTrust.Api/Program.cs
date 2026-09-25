@@ -279,6 +279,7 @@ builder.Services.AddScoped<IPlatformPaymentProcessor>(sp =>
 builder.Services.AddScoped<DemoGroceryConnector>();
 builder.Services.AddScoped<ICommerceConnector>(services => services.GetRequiredService<DemoGroceryConnector>());
 builder.Services.AddScoped<MerchantConnectorRegistry>();
+builder.Services.AddScoped<CommerceProviderOptimizer>();
 builder.Services.AddSingleton<IObjectiveExpansionCapability, GroceryMealObjectiveCapability>();
 builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
 builder.Services.AddScoped<ICommerceAnalystWorker, CommerceAnalystWorker>();

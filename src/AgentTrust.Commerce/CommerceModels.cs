@@ -40,6 +40,12 @@ public sealed class PurchaseAuthorisation
       MerchantId = merchantId; AuthorisedAmount = authorisedAmount; Currency = currency;
       AuthorisedAt = authorisedAt; ExpiresAt = expiresAt; PolicyVersion = policyVersion;
       IntentHash = intentHash; Signature = signature; }
+    public static PurchaseAuthorisation Restore(string authorisationId,string purchaseIntentId,string transactionId,
+        string principalId,string agentId,string mandateId,int mandateVersion,string merchantId,
+        decimal authorisedAmount,string currency,DateTimeOffset authorisedAt,DateTimeOffset expiresAt,
+        string policyVersion,string intentHash,string signature) =>
+        new(authorisationId,purchaseIntentId,transactionId,principalId,agentId,mandateId,mandateVersion,
+            merchantId,authorisedAmount,currency,authorisedAt,expiresAt,policyVersion,intentHash,signature);
     public string AuthorisationId { get; } public string PurchaseIntentId { get; } public string TransactionId { get; }
     public string PrincipalId { get; } public string AgentId { get; } public string MandateId { get; }
     public int MandateVersion { get; } public string MerchantId { get; } public decimal AuthorisedAmount { get; }

@@ -5,11 +5,24 @@ using AgentTrust.Connectors;
 using AgentTrust.Consumer;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentTrust.Api;
 
 public sealed record CommerceAgentItem(string Concept,int Quantity=1,bool AllowSubstitution=true);
 public sealed record CommerceAgentDecision(IReadOnlyList<string> SearchQueries,IReadOnlyList<CommerceAgentItem> Items,string Summary,string Message);
+public static class CommerceProposalFingerprint
+{
+    public static string Hash(ConsumerPurchasePlan plan,MerchantPlanningQuote quote)
+    {
+        var payload=JsonSerializer.Serialize(new{plan.Status,plan.Summary,plan.MaximumAmount,plan.Currency,
+            Items=plan.Items.OrderBy(x=>x.SearchTerm,StringComparer.Ordinal).Select(x=>new{x.SearchTerm,x.Quantity}),
+            quote.QuoteId,quote.MerchantId,QuoteCurrency=quote.Currency,quote.Total,quote.ExpiresAt,
+            QuoteItems=quote.Items.OrderBy(x=>x.ProductId,StringComparer.Ordinal).Select(x=>new{x.ProductId,x.Quantity,x.UnitPrice,x.TotalPrice})});
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    }
+}
 public sealed record CommerceAgentContext(string Objective,decimal MaximumAmount,string Currency,
     MerchantPlanningContext Provider,IReadOnlyDictionary<string,string> CustomerContext,
     IReadOnlyList<Product> Candidates,IReadOnlyList<string> Evidence,int Turn);
@@ -146,11 +159,13 @@ public sealed class ConsumerCommerceAgentLoop
                 foreach(var finding in audit.Findings)evidence.Add($"audit:{finding}");
                 if(audit.RequiresRevision){used.Add("auditor:revise");if(!string.IsNullOrWhiteSpace(audit.RevisionInstruction))evidence.Add(audit.RevisionInstruction);continue;}
                 if(!audit.Accepted)return RejectAudit(conversation,parsedBudget.Value,used,audit,now,turn);
-                used.Add("auditor:accepted");
                 var items=quote.Items.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray();
                 var plan=new ConsumerPurchasePlan(PurchasePlanningStatus.Ready,decision.Summary,
                     string.IsNullOrWhiteSpace(decision.Message)?$"{quote.MerchantName} verified the order at £{quote.Total:0.00}. Shall I go ahead?":decision.Message,
                     parsedBudget.Value,quote.Currency,items,["Shall I go ahead?"],quote.Total,used,conversation.ConversationId,turn,PurchaseInteractionDecision.Propose);
+                used.Add("auditor:accepted");
+                used.Add($"auditor:proposal-hash:{CommerceProposalFingerprint.Hash(plan,quote)}");
+                plan=plan with{ToolsUsed=used.ToArray()};
                 Save(conversation,plan,quote,now);return plan;
             }
             catch(Exception ex) when(ex is KeyNotFoundException or InvalidOperationException or ArgumentException)

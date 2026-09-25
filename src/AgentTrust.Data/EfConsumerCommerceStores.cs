@@ -246,6 +246,8 @@ public sealed class EfMandateUsageTracker : IMandateUsageTracker
     public bool TryReserve(FinancialMandate mandate,string executionId,decimal amount,DateTimeOffset now,out MandateSpendReservation? reservation,out IReadOnlyList<string> reasons,bool oneOffLimitOverride=false)
     {
         using var tx=_db.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);var failures=new List<string>();
+        var existing=_db.SpendReservations.AsNoTracking().SingleOrDefault(x=>x.ExecutionId==executionId&&x.MandateId==mandate.MandateId&&x.Amount==amount&&x.Status=="Reserved");
+        if(existing is not null){tx.Commit();reservation=new(existing.ReservationId,existing.MandateId,existing.ExecutionId,existing.Amount,existing.ReservedAt,SpendReservationStatus.Reserved);reasons=[];return true;}
         if(amount<=0)failures.Add("AMOUNT_MUST_BE_POSITIVE");if(_db.SpendReservations.Any(x=>x.ExecutionId==executionId&&x.Status!="Released"))failures.Add("EXECUTION_ALREADY_RESERVED");
         if(!oneOffLimitOverride){Check(mandate.DailyLimit,new DateTimeOffset(now.Year,now.Month,now.Day,0,0,0,now.Offset),"DAILY_LIMIT_EXCEEDED");Check(mandate.WeeklyLimit,now.AddDays(-7),"WEEKLY_LIMIT_EXCEEDED");Check(mandate.MonthlyLimit,now.AddMonths(-1),"MONTHLY_LIMIT_EXCEEDED");}
         if(failures.Count>0){tx.Rollback();reservation=null;reasons=failures;return false;}
@@ -274,6 +276,13 @@ public sealed class EfCommerceDurability : ICommerceDurability
         _db.PurchaseAuthorisations.Add(new(){AuthorisationId=a.AuthorisationId,PurchaseIntentId=a.PurchaseIntentId,TransactionId=a.TransactionId,PrincipalId=a.PrincipalId,AgentId=a.AgentId,MandateId=a.MandateId,
             MandateVersion=a.MandateVersion,MerchantId=a.MerchantId,AuthorisedAmount=a.AuthorisedAmount,Currency=a.Currency,IntentHash=a.IntentHash,PolicyVersion=a.PolicyVersion,
             SigningKeyId="legacy-current",Algorithm="HMAC-SHA256",Signature=a.Signature,Status="Active",IssuedAt=a.AuthorisedAt,ExpiresAt=a.ExpiresAt,Version=1});_db.SaveChanges();
+    }
+    public PurchaseAuthorisation? FindAuthorisationOwned(string id,string principal)
+    {
+        var a=_db.PurchaseAuthorisations.AsNoTracking().SingleOrDefault(x=>x.PurchaseIntentId==id&&x.PrincipalId==principal&&x.Status=="Active");
+        return a is null?null:PurchaseAuthorisation.Restore(a.AuthorisationId,a.PurchaseIntentId,a.TransactionId,a.PrincipalId,
+            a.AgentId,a.MandateId,a.MandateVersion,a.MerchantId,a.AuthorisedAmount,a.Currency,a.IssuedAt,a.ExpiresAt,
+            a.PolicyVersion,a.IntentHash,a.Signature);
     }
     public void SaveCheckout(PurchaseIntent item,string status)
     {
