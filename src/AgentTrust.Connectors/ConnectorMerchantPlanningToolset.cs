@@ -46,7 +46,8 @@ public sealed class ConnectorMerchantPlanningToolset:IMerchantPlanningToolset
 public sealed class GroceryMealObjectiveCapability:IObjectiveExpansionCapability
 {
     public string CapabilityName=>"meal_planning";
-    public bool CanExpand(string objective)=>objective.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)
+    public bool CanExpand(string objective)=>objective.Contains("breakfast",StringComparison.OrdinalIgnoreCase)
+        ||objective.Contains("chicken wrap",StringComparison.OrdinalIgnoreCase)
         ||((objective.Contains("groceries for dinner",StringComparison.OrdinalIgnoreCase)
             ||objective.Contains("food for dinner",StringComparison.OrdinalIgnoreCase))
             &&(objective.Contains("use your best judgement",StringComparison.OrdinalIgnoreCase)
@@ -54,6 +55,8 @@ public sealed class GroceryMealObjectiveCapability:IObjectiveExpansionCapability
                 ||objective.Contains("use the suggested meal",StringComparison.OrdinalIgnoreCase)));
     public Task<ObjectiveExpansion?> ExpandAsync(string objective,CancellationToken cancellationToken=default)
     {
+        if(objective.Contains("breakfast",StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult<ObjectiveExpansion?>(new(objective,["bread","eggs","milk","banana"],[],"grocery-breakfast-capability:v1"));
         var dinner=objective.Contains("groceries for dinner",StringComparison.OrdinalIgnoreCase)
             ||objective.Contains("food for dinner",StringComparison.OrdinalIgnoreCase);
         return Task.FromResult<ObjectiveExpansion?>(dinner

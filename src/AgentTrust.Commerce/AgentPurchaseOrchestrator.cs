@@ -29,6 +29,7 @@ public sealed class AgentPurchaseOrchestrator
     private readonly IPurchaseAuditSink _audit; private readonly LivePurchaseGate _liveGate;
     private readonly IOneOffAuthorisationStore _oneOffs;
     private readonly ICommerceDurability _durability;
+    private readonly CommerceGoalLoop _goalLoop = new();
     private readonly object _gate = new();
     private readonly Dictionary<string, PendingPurchase> _pending = new();
     private readonly Dictionary<string, string> _intentHashes = new();
@@ -77,27 +78,37 @@ public sealed class AgentPurchaseOrchestrator
                 return Denied(intentId, task, "PAYMENT_METHOD_OWNERSHIP_MISMATCH");
             if (!method.IsUsable(DateOnly.FromDateTime(DateTime.UtcNow))) return Denied(intentId, task, "PAYMENT_METHOD_INACTIVE");
 
+            Audit("GoalObserved", intentId, task.PrincipalId, null);
+            var goals = task.ShoppingList.Select((requested, index) => new CommerceGoal(
+                $"{task.TaskId}:{index}", requested.SearchTerm, requested.Quantity,
+                requested.PreferredProductId, requested.MaximumUnitPrice,
+                task.Preferences.Substitutions, requested.RequiredForOutcome)).ToArray();
+            Audit("GoalOriented", intentId, task.PrincipalId, null);
             var basket = await connector.CreateBasketAsync(task.PrincipalId, cancellationToken);
-            foreach (var requested in task.ShoppingList)
+            var proofs = new List<CommerceGoalProof>();
+            foreach (var goal in goals)
             {
-                var products = await connector.SearchProductsAsync(requested.SearchTerm, cancellationToken);
-                var eligibleProducts = products
-                    .Where(product => requested.MaximumUnitPrice is null || product.UnitPrice <= requested.MaximumUnitPrice)
-                    .ToList();
-                var product = requested.PreferredProductId is not null
-                    ? eligibleProducts.FirstOrDefault(candidate => candidate.ProductId == requested.PreferredProductId)
-                        ?? eligibleProducts.OrderBy(candidate => candidate.UnitPrice).FirstOrDefault()
-                    : eligibleProducts.OrderBy(candidate => candidate.UnitPrice).FirstOrDefault();
-                if (product is null) return Denied(intentId, task, $"PRODUCT_NOT_FOUND:{requested.SearchTerm}");
-                basket = await connector.AddBasketItemAsync(basket.BasketId, product.ProductId, requested.Quantity,
-                    task.Preferences.Substitutions != SubstitutionPolicy.Never, cancellationToken);
+                var outcome = await _goalLoop.SatisfyAsync(goal, basket, connector, cancellationToken);
+                if (outcome.Proof is null)
+                {
+                    if (goal.RequiredForOutcome) return Denied(intentId, task, $"GOAL_UNSATISFIED:{goal.SearchTerm}");
+                    Audit("GoalAdapted", intentId, task.PrincipalId, null);
+                    continue;
+                }
+                basket = outcome.Basket;
+                proofs.Add(outcome.Proof);
             }
+            Audit("GoalDecisionMade", intentId, task.PrincipalId, null);
             Audit("BasketBuilt", intentId, task.PrincipalId, null);
             var deliveries = await connector.GetDeliveryOptionsAsync(basket.BasketId, cancellationToken);
             var delivery = deliveries.OrderBy(x => x.Fee).First();
             await connector.SelectDeliveryOptionAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
             var quote = await connector.GetQuoteAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
-            if(quote.TotalAmount>task.MaximumAmount)return Denied(intentId,task,"USER_BUDGET_EXCEEDED");
+            Audit("GoalActed", intentId, task.PrincipalId, null);
+            var goalCheck = _goalLoop.Check(goals, proofs, quote, task.MaximumAmount);
+            if (!goalCheck.Passed) return Denied(intentId, task, goalCheck.Failures);
+            Audit("GoalProved", intentId, task.PrincipalId, null);
+            Audit("GoalChecked", intentId, task.PrincipalId, null);
             var intent = new PurchaseIntent(intentId, task.PrincipalId, task.AgentId, task.MandateId, task.TaskId,
                 connector.MerchantId, connector.MerchantName, quote.Currency, quote.Items, quote.Subtotal,
                 quote.DeliveryFee, quote.TotalAmount, task.Preferences.DeliveryAddressReference,

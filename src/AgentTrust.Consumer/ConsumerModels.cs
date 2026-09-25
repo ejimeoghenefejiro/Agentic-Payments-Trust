@@ -21,7 +21,7 @@ public sealed record ConnectedService(string Id, string PrincipalId, string Prov
 public sealed record PurchasePreference(string DeliveryAddressReference, string? RequestedDeliveryWindow,
     SubstitutionPolicy Substitutions, IReadOnlyDictionary<string, string> DeliveryPreferences);
 public sealed record ShoppingListItem(string SearchTerm, int Quantity, string? PreferredProductId = null,
-    decimal? MaximumUnitPrice = null);
+    decimal? MaximumUnitPrice = null, bool RequiredForOutcome = true);
 public sealed record ConsumerPurchaseTask(string TaskId, string PrincipalId, string AgentId,
     IReadOnlySet<string> MerchantScope, string Schedule, string Timezone, decimal MaximumAmount,
     string Currency, IReadOnlyList<ShoppingListItem> ShoppingList, PurchasePreference Preferences,

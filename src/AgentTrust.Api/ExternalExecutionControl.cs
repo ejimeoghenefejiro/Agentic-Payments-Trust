@@ -16,7 +16,6 @@ public sealed class ConfigurationExternalExecutionControl(IConfiguration configu
         var domainSetting = proposal.Action switch
         {
             "place_order" when proposal.ProviderId.Contains("restaurant", StringComparison.OrdinalIgnoreCase) => "RestaurantExecutionEnabled",
-            "book_service" => "HomeServiceExecutionEnabled",
             "execute_fulfilment" => "ThirdPartyFulfilmentEnabled",
             _ => "GroceryExecutionEnabled"
         };

@@ -279,10 +279,15 @@ builder.Services.AddScoped<ICommerceConnector>(services => services.GetRequiredS
 builder.Services.AddScoped<MerchantConnectorRegistry>();
 builder.Services.AddSingleton<IObjectiveExpansionCapability, GroceryMealObjectiveCapability>();
 builder.Services.AddScoped<GroceryConsumerPurchasePlanner>();
+builder.Services.AddScoped<ICommerceAnalystWorker, CommerceAnalystWorker>();
+builder.Services.AddScoped<ICommercePlannerWorker, SemanticKernelCommerceAgentReasoningEngine>();
+builder.Services.AddScoped<ICommerceAuditorWorker, SemanticKernelCommerceAuditorWorker>();
+builder.Services.AddScoped<ConsumerCommerceAgentLoop>();
 builder.Services.AddScoped<IProviderPlanningCapability, CommerceConnectorPlanningCapability>();
 builder.Services.AddScoped<IDomainPlanningCapability, GroceryDomainPlanningCapability>();
 builder.Services.AddScoped<IConsumerPurchaseRequestAgent, ConsumerPurchaseRequestAgent>();
 builder.Services.AddScoped<ConsumerCommerceAgent>();
+builder.Services.AddScoped<ConsumerCommerceOperator>();
 builder.Services.AddScoped<ICustomerRequestUnderstandingAgent, SemanticKernelCustomerRequestUnderstandingAgent>();
 builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
 {
@@ -292,7 +297,6 @@ builder.Services.AddSingleton<IServiceActionAuthorisationService>(_ =>
     return new HmacServiceActionAuthorisationService(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 });
 builder.Services.AddScoped<IServiceConnector, DemoRestaurantConnector>();
-builder.Services.AddScoped<IServiceConnector, DemoHomeServiceConnector>();
 builder.Services.AddSingleton<IExternalExecutionControl, ConfigurationExternalExecutionControl>();
 if (connectionString is not null)
 {
@@ -313,7 +317,6 @@ builder.Services.AddScoped<IFulfilmentReconciliationService>(services => service
 builder.Services.AddScoped<IServiceConnector>(services => services.GetRequiredService<DemoThirdPartyDeliveryConnector>());
 builder.Services.AddScoped<ServiceConnectorRegistry>();
 builder.Services.AddScoped<IServiceDomainCapability, RestaurantDomainCapability>();
-builder.Services.AddScoped<IServiceDomainCapability, HomeServiceDomainCapability>();
 builder.Services.AddScoped<ServicePlanningRouter>();
 builder.Services.AddScoped<MandateLimitChangeService>();
 

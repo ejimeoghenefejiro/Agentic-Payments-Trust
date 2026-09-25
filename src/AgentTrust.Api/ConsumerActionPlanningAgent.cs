@@ -9,7 +9,8 @@ public sealed record ConsumerActionPlanningContext(
     string Instruction,
     string ProviderId,
     string ProviderName,
-    IReadOnlySet<string> AvailableCapabilities);
+    IReadOnlySet<string> AvailableCapabilities,
+    CustomerRequestUnderstanding? Analysis=null);
 
 /// <summary>Resolves a provider and its advertised operations. It contains no domain reasoning.</summary>
 public interface IProviderPlanningCapability
@@ -73,14 +74,17 @@ public sealed class CommerceConnectorPlanningCapability : IProviderPlanningCapab
 /// <summary>Shared grocery semantics usable by Tesco, Sainsbury's, or any compatible provider.</summary>
 public sealed class GroceryDomainPlanningCapability:IDomainPlanningCapability
 {
-    private readonly GroceryConsumerPurchasePlanner _planner;
-    public GroceryDomainPlanningCapability(GroceryConsumerPurchasePlanner planner)=>_planner=planner;
+    private readonly GroceryConsumerPurchasePlanner _offlinePlanner;private readonly ConsumerCommerceAgentLoop _agentLoop;
+    public GroceryDomainPlanningCapability(GroceryConsumerPurchasePlanner offlinePlanner,ConsumerCommerceAgentLoop agentLoop)
+    {_offlinePlanner=offlinePlanner;_agentLoop=agentLoop;}
     public string DomainId=>"grocery";
     public bool CanHandle(ConsumerActionPlanningContext context,ProviderPlanningSession provider)=>
         provider.Provider is IProductSearchCapability&&provider.Capabilities.Contains("search_products")&&provider.Capabilities.Contains("get_quote");
     public async Task<ConsumerPurchasePlan> PlanAsync(ConsumerActionPlanningContext context,ProviderPlanningSession provider,CancellationToken cancellationToken)
     {
+        if(AgentTrust.Agents.AgentFactory.IsLiveModeConfigured)
+            return await _agentLoop.RunAsync(context,provider,cancellationToken);
         var catalogue=await ((IProductSearchCapability)provider.Provider).SearchProductsAsync(string.Empty,cancellationToken);
-        return await _planner.PlanAsync(context.PrincipalId, context.ConversationId, context.Instruction, catalogue, cancellationToken);
+        return await _offlinePlanner.PlanAsync(context.PrincipalId, context.ConversationId, context.Instruction, catalogue, cancellationToken);
     }
 }

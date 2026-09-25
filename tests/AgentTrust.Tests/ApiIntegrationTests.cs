@@ -143,6 +143,18 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal("grocery-dinner-capability:v1",expansion.Provenance);
     }
     [Fact]
+    public async Task GroceryDomain_ExpandsBreakfastIntoProviderSearchConcepts()
+    {
+        var capability=new AgentTrust.Connectors.GroceryMealObjectiveCapability();
+
+        Assert.True(capability.CanExpand("Buy me breakfast on a budget of £10.50"));
+        var expansion=await capability.ExpandAsync("Buy me breakfast on a budget of £10.50");
+
+        Assert.NotNull(expansion);
+        Assert.Equal(["bread","eggs","milk","banana"],expansion.RequiredConcepts);
+        Assert.Equal("grocery-breakfast-capability:v1",expansion.Provenance);
+    }
+    [Fact]
     public async Task GroceryDomain_ClarifiesAnAmbiguousDinnerWithoutGenericMealKnowledge()
     {
         var capability=new AgentTrust.Connectors.GroceryMealObjectiveCapability();
@@ -376,6 +388,28 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var now=DateTimeOffset.UtcNow;
         var mandateResponse=await _client.PostAsJsonAsync("/api/consumer/mandates",new{agentId=agent,merchantIds=new[]{"demo-grocery"},paymentMethodId=methodId,currency="GBP",perTransactionLimit=70m,weeklyLimit=70m,humanApprovalThreshold=70m,validFrom=now.AddMinutes(-1),validUntil=now.AddMonths(1)});
         Assert.Equal(HttpStatusCode.Created,mandateResponse.StatusCode);var mandate=await mandateResponse.Content.ReadFromJsonAsync<JsonElement>();var mandateId=mandate.GetProperty("mandateId").GetString()!;
+        using(var breakfastRequest=new StringContent("Buy me breakfast on a budget of £10.50",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var response=await _client.PostAsync("/api/consumer/purchases/request",breakfastRequest);Assert.Equal(HttpStatusCode.OK,response.StatusCode);
+            var body=await response.Content.ReadFromJsonAsync<JsonElement>();var plan=body.GetProperty("planning");
+            Assert.Equal("READY",plan.GetProperty("status").GetString());Assert.Equal("PROPOSE",plan.GetProperty("interactionDecision").GetString());
+            Assert.Equal(9.90m,plan.GetProperty("estimatedTotal").GetDecimal());Assert.Equal(4,plan.GetProperty("items").GetArrayLength());
+        }
+        using(var resetRequest=new StringContent("Start again",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var response=await _client.PostAsync("/api/consumer/purchases/request",resetRequest);Assert.Equal(HttpStatusCode.OK,response.StatusCode);
+            var plan=(await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("planning");
+            Assert.Equal("RESET",plan.GetProperty("status").GetString());Assert.Equal("CANCELLED",plan.GetProperty("interactionDecision").GetString());
+        }
+        using(var breadRequest=new StringContent("Buy two loaves of wholemeal bread within £8.",System.Text.Encoding.UTF8,"text/plain"))
+        {
+            var response=await _client.PostAsync("/api/consumer/purchases/request",breadRequest);Assert.Equal(HttpStatusCode.OK,response.StatusCode);
+            var plan=(await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("planning");
+            Assert.Equal("READY",plan.GetProperty("status").GetString());Assert.Equal(5.30m,plan.GetProperty("estimatedTotal").GetDecimal());
+            Assert.Equal(2,plan.GetProperty("items")[0].GetProperty("quantity").GetInt32());
+        }
+        using(var resetRequest=new StringContent("Start again",System.Text.Encoding.UTF8,"text/plain"))
+            Assert.Equal(HttpStatusCode.OK,(await _client.PostAsync("/api/consumer/purchases/request",resetRequest)).StatusCode);
         using(var lowBudgetRequest=new StringContent("I want to make chicken wraps. Get all required ingredients within a £4.99 budget.",System.Text.Encoding.UTF8,"text/plain"))
         {
             var lowBudgetResponse=await _client.PostAsync("/api/consumer/purchases/request",lowBudgetRequest);Assert.Equal(HttpStatusCode.OK,lowBudgetResponse.StatusCode);

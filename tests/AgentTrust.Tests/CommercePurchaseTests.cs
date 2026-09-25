@@ -56,6 +56,73 @@ public sealed class CommercePurchaseTests
         Assert.Equal(first.Execution.ExecutionId, duplicate.Execution.ExecutionId);
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "TrustApproved");
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "PurchaseCompleted");
+        Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalObserved");
+        Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
+        Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalChecked");
+    }
+
+    [Fact]
+    public async Task RecurringOrderAdaptsToAvailableAlternativeAndStillProvesTheGoal()
+    {
+        var catalogue = new[]
+        {
+            new Product("usual-milk", "Usual milk", 1.20m, "GBP", 0, new HashSet<string>{"milk"}),
+            new Product("value-milk", "Value milk", 1.00m, "GBP", 20, new HashSet<string>{"milk"})
+        };
+        var fixture = Build(maximum: 70, catalogue: catalogue, preferredProductId: "usual-milk");
+
+        var result = await fixture.Orchestrator.RunAsync("task-1", "principal-1",
+            DateTimeOffset.Parse("2026-09-11T09:00:00Z"), fixture.Connector, new(false, false));
+
+        Assert.Equal(PurchaseExecutionState.Purchased, result.Execution.State);
+        Assert.Equal("value-milk", Assert.Single(result.Intent!.BasketItems).ProductId);
+        Assert.Equal(1, fixture.Payments.SubmissionCount);
+        Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
+        Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalChecked");
+    }
+
+    [Fact]
+    public async Task RecurringOrderCannotSubstituteWhenCustomerForbidsIt()
+    {
+        var catalogue = new[]
+        {
+            new Product("usual-milk", "Usual milk", 1.20m, "GBP", 0, new HashSet<string>{"milk"}),
+            new Product("value-milk", "Value milk", 1.00m, "GBP", 20, new HashSet<string>{"milk"})
+        };
+        var fixture = Build(maximum: 70, catalogue: catalogue, preferredProductId: "usual-milk",
+            substitutionPolicy: SubstitutionPolicy.Never);
+
+        var result = await fixture.Orchestrator.RunAsync("task-1", "principal-1",
+            DateTimeOffset.Parse("2026-09-18T09:00:00Z"), fixture.Connector, new(false, false));
+
+        Assert.Equal(PurchaseExecutionState.Denied, result.Execution.State);
+        Assert.Contains("GOAL_UNSATISFIED:milk", result.Execution.Reasons);
+        Assert.Equal(0, fixture.Payments.SubmissionCount);
+    }
+
+    [Fact]
+    public async Task RecurringMealStillCompletesWhenUnavailableItemIsNotRequiredForOutcome()
+    {
+        var catalogue = new[]
+        {
+            new Product("chicken", "Chicken", 4m, "GBP", 20, new HashSet<string>{"chicken"}),
+            new Product("optional-sauce", "Optional sauce", 1m, "GBP", 0, new HashSet<string>{"sauce"})
+        };
+        var shoppingList = new[]
+        {
+            new ShoppingListItem("chicken", 1),
+            new ShoppingListItem("sauce", 1, RequiredForOutcome: false)
+        };
+        var fixture = Build(maximum: 70, catalogue: catalogue, shoppingList: shoppingList);
+
+        var result = await fixture.Orchestrator.RunAsync("task-1", "principal-1",
+            DateTimeOffset.Parse("2026-09-25T09:00:00Z"), fixture.Connector, new(false, false));
+
+        Assert.Equal(PurchaseExecutionState.Purchased, result.Execution.State);
+        Assert.Equal("chicken", Assert.Single(result.Intent!.BasketItems).ProductId);
+        Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalAdapted");
+        Assert.Contains(fixture.Audit.Find(result.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
+        Assert.Equal(1, fixture.Payments.SubmissionCount);
     }
 
     [Fact]
@@ -163,7 +230,9 @@ public sealed class CommercePurchaseTests
     }
 
     private static Fixture Build(decimal maximum, MandateStatus status = MandateStatus.Active,
-        LivePurchaseOptions? live = null,decimal taskBudget=70)
+        LivePurchaseOptions? live = null,decimal taskBudget=70,IEnumerable<Product>? catalogue=null,
+        string? preferredProductId=null,SubstitutionPolicy substitutionPolicy=SubstitutionPolicy.SameOrLowerPrice,
+        IReadOnlyList<ShoppingListItem>? shoppingList=null)
     {
         var now = DateTimeOffset.UtcNow; var agents = new InMemoryAgentRegistry(); var bindings = new InMemoryPrincipalBindingStore();
         var authorities = new InMemoryDelegatedAuthorityStore();
@@ -177,11 +246,11 @@ public sealed class CommercePurchaseTests
         var methods = new InMemoryPaymentMethodStore(); methods.Save(new PaymentMethod("pm-1", "principal-1", "Stripe", "pm_test_token", "Visa", "4242", 12, now.Year + 2, PaymentMethodStatus.Active));
         var tasks = new InMemoryConsumerTaskStore(); tasks.Save(new ConsumerPurchaseTask("task-1", "principal-1", "agent-1",
             new HashSet<string>{"GroceryDemo"}, "0 10 * * SUN", "Europe/London", taskBudget, "GBP",
-            [new ShoppingListItem("milk", 1)], new PurchasePreference("address-1", "Sunday 10:00-12:00", SubstitutionPolicy.SameOrLowerPrice, new Dictionary<string,string>()),
+            shoppingList??[new ShoppingListItem("milk", 1, preferredProductId)], new PurchasePreference("address-1", "Sunday 10:00-12:00", substitutionPolicy, new Dictionary<string,string>()),
             "mandate-1", "pm-1", ConsumerTaskStatus.Active, now, now));
         var executions = new InMemoryPurchaseExecutionStore(); var usage = new InMemoryMandateUsageTracker();
         var auth = new HmacPurchaseAuthorisationService(RandomNumberGenerator.GetBytes(32)); var payments = new MockPlatformPaymentProcessor();
-        var connector = new DemoGroceryConnector(auth, payments); var audit = new InMemoryPurchaseAuditSink();
+        var connector = new DemoGroceryConnector(auth, payments, catalogue); var audit = new InMemoryPurchaseAuditSink();
         var orchestrator = new AgentPurchaseOrchestrator(tasks, executions, mandates, usage, methods, authorities,
             trust, auth, audit, new LivePurchaseGate(live ?? new LivePurchaseOptions()), new InMemoryOneOffAuthorisationStore());
         return new Fixture(orchestrator, connector, payments, audit, mandates, methods);

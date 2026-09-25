@@ -31,14 +31,14 @@ public sealed class ConsumerController : ControllerBase
     private readonly IMandateStore _mandates; private readonly ICommerceDurability _durability; private readonly IPurchaseAuditSink _audit;
     private readonly IScheduledOccurrenceStore _occurrences;
     private readonly IAgentRegistry _agents;private readonly IPrincipalBindingStore _bindings;private readonly IPrincipalStore _principals;
-    private readonly ConsumerCommerceAgent _commerceAgent;private readonly IConfiguration _configuration;
+    private readonly ConsumerCommerceAgent _commerceAgent;private readonly ConsumerCommerceOperator _commerceOperator;private readonly IConfiguration _configuration;
     private readonly IConsumerPlanningStore _planning;private readonly IConsumerMemoryService _memory;private readonly MandateLimitChangeService _limitChanges;private readonly IMandateLimitChangeStore _limitChangeStore;private readonly IAuthorizationService _authorization;
     private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ICustomerRequestUnderstandingAgent _understanding;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, MerchantConnectorRegistry connectors,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,ConsumerCommerceOperator commerceOperator,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_commerceOperator=commerceOperator;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -64,7 +64,7 @@ public sealed class ConsumerController : ControllerBase
         var next=NextOccurrence(request.Schedule,request.Timezone,DateTimeOffset.UtcNow);
         var task = new ConsumerPurchaseTask($"ctask_{Guid.NewGuid():N}", principal, mandate.AgentId,
             new HashSet<string>([merchant],StringComparer.OrdinalIgnoreCase), $"Weekly:{request.Schedule.DayOfWeek}:{request.Schedule.LocalTime}", request.Timezone,
-            request.MaximumAmount, request.Currency, request.ShoppingList.Select(x=>new ShoppingListItem(x.Query,x.Quantity,x.PreferredProductId,x.MaximumUnitPrice)).ToList(),
+            request.MaximumAmount, request.Currency, request.ShoppingList.Select(x=>new ShoppingListItem(x.Query,x.Quantity,x.PreferredProductId,x.MaximumUnitPrice,x.RequiredForOutcome)).ToList(),
             new PurchasePreference(request.DeliveryAddressReference??"dev-address", null,
                 request.SubstitutionPolicy.Allowed?SubstitutionPolicy.SameOrLowerPrice:SubstitutionPolicy.Never,new Dictionary<string,string>{{"instruction",request.Instruction}}),
             request.MandateId, request.PaymentMethodId, ConsumerTaskStatus.Active,
@@ -139,6 +139,14 @@ public sealed class ConsumerController : ControllerBase
         var setup=BuildSetupStatus(principal,now);if(!setup.IsReady)return Conflict(setup);
         var startsNew=ContainsAny(instruction,"new order","new transaction","start again","start over");
         var latestConversation=_planning.FindLatestOpen(principal,now.AddMinutes(-30));
+        if(latestConversation is not null&&IsConversationReset(instruction))
+        {
+            _planning.ReplaceReservations(latestConversation.ConversationId,[]);
+            _planning.Save(latestConversation with{Status="RESET",UpdatedAt=now,Version=latestConversation.Version+1});
+            _planning.Append(new($"planning_turn_{Guid.NewGuid():N}",latestConversation.ConversationId,_planning.Turns(latestConversation.ConversationId).Count+1,"user","reset",instruction,null,null,null,now));
+            var resetPlan=new ConsumerPurchasePlan("RESET","New request started","Your previous request is closed. What would you like me to buy?",0,"GBP",[],[],null,[],InteractionDecision:"CANCELLED");
+            return Ok(new{instruction,planning=resetPlan,paymentAttempted=false,trustBoundaryInvoked=false});
+        }
         if(latestConversation is not null&&ContainsAny(instruction,"cancel","never mind","nevermind","stop this order"))
         {
             var cancelledPlan=new ConsumerPurchasePlan("CANCELLED","Purchase cancelled","I cancelled the prepared purchase. Nothing was charged.",0,"GBP",[],[],null,[],InteractionDecision:"CANCELLED");
@@ -168,17 +176,18 @@ public sealed class ConsumerController : ControllerBase
         var resumesOpenConversation=latestConversation is not null&&explicitContinuation;
         var managedConversationId=!startsNew&&resumesOpenConversation?latestConversation?.ConversationId:null;
         var planningContext=new ConsumerActionPlanningContext(principal,managedConversationId,instruction,_connector.MerchantId,_connector.MerchantName,
-            CommerceCapabilityCatalog.Describe(_connector));
+            CommerceCapabilityCatalog.Describe(_connector),understanding);
         ConsumerCommercePreparation prepared;try{prepared=await _commerceAgent.PrepareAsync(planningContext,now,token);}catch(UnauthorizedAccessException){return NotFound();}
         var plan=prepared.Plan;
         if(prepared.FailureCode is not null)return UnprocessableEntity(new{code=prepared.FailureCode,message=prepared.FailureMessage,planning=plan,paymentAttempted=false,trustBoundaryInvoked=false});
         if(plan.InteractionDecision!=PurchaseInteractionDecision.Execute)return Ok(new{instruction,planning=plan,merchantQuote=prepared.Quote,readiness=prepared.IsExecutable?"READY_FOR_CONFIRMATION":"NEEDS_INPUT",conversationPolicy=_planning.GetPolicy(principal),paymentAttempted=false,trustBoundaryInvoked=false});
         if(!(await _authorization.AuthorizeAsync(User,"StepUp")).Succeeded)return Forbid();
-        var preparedTask=_commerceAgent.PreparePurchase(prepared,principal,instruction,now);var task=_tasks.FindOwned(preparedTask.TaskId,principal);
-        if(task is null){task=preparedTask;_tasks.Save(task);}var stripe=string.Equals(_configuration["Payments:Provider"],"Stripe",StringComparison.OrdinalIgnoreCase);
-        var result=await _orchestrator.RunAsync(task.TaskId,principal,task.CreatedAt,_connector,new(stripe,true),token);
-        return Ok(new{instruction,planning=plan,paymentAttempted=result.Execution.State is PurchaseExecutionState.CheckoutSubmitted or PurchaseExecutionState.Processing or PurchaseExecutionState.Purchased,trustBoundaryInvoked=true,taskId=task.TaskId,result.Execution,result.Intent,result.Receipt});
+        var preparedTask=_commerceAgent.PreparePurchase(prepared,principal,instruction,now);
+        var result=await _commerceOperator.ExecuteAsync(prepared,preparedTask,principal,token);
+        return Ok(new{instruction,planning=plan,paymentAttempted=result.Execution.State is PurchaseExecutionState.CheckoutSubmitted or PurchaseExecutionState.Processing or PurchaseExecutionState.Purchased,trustBoundaryInvoked=true,taskId=preparedTask.TaskId,result.Execution,result.Intent,result.Receipt});
     }
+    private static bool IsConversationReset(string instruction)=>System.Text.RegularExpressions.Regex.IsMatch(
+        instruction.Trim(),@"^(?:start again|start over|new order|new transaction)[.!]?$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     [HttpGet("purchases/{id}")] public ActionResult<PurchaseExecution> Purchase(string id) => _purchases.FindOwned(id, PrincipalId()) is { } item ? Ok(item) : NotFound();
     [HttpGet("purchases/{id}/audit")] public ActionResult<object> PurchaseAudit(string id)
     { var purchase=_purchases.FindOwned(id,PrincipalId());if(purchase is null)return NotFound();var events=_audit.Find(purchase.PurchaseIntentId);var valid=events.Count>0;for(var i=0;i<events.Count;i++){var expectedPrevious=i==0?events[i].PreviousHash:events[i-1].CurrentHash;valid&=events[i].PreviousHash==expectedPrevious&&events[i].CurrentHash==PurchaseAuditHash.Compute(events[i],events[i].PreviousHash);}return Ok(new{isValid=valid,eventCount=events.Count,events}); }
@@ -242,7 +251,7 @@ public sealed class ConsumerController : ControllerBase
 
 public sealed record CreateConsumerTaskRequest(string Instruction,string MerchantId,string MandateId,string PaymentMethodId,string Currency,decimal MaximumAmount,string Timezone,TaskScheduleRequest Schedule,IReadOnlyList<TaskShoppingItemRequest> ShoppingList,TaskSubstitutionRequest SubstitutionPolicy,string? DeliveryAddressReference=null);
 public sealed record TaskScheduleRequest(string Frequency,string DayOfWeek,string LocalTime);
-public sealed record TaskShoppingItemRequest(string Query,int Quantity,string? PreferredProductId=null,decimal? MaximumUnitPrice=null);
+public sealed record TaskShoppingItemRequest(string Query,int Quantity,string? PreferredProductId=null,decimal? MaximumUnitPrice=null,bool RequiredForOutcome=true);
 public sealed record TaskSubstitutionRequest(bool Allowed,decimal MaximumAdditionalAmount=0);
 public sealed record RunPurchaseRequest(DateTimeOffset? ScheduledFor=null, bool LiveMode = false, bool ExplicitLiveConfirmation = false);
 public sealed record RunPilotRequest(string TaskId, DateTimeOffset ScheduledFor, bool ExplicitLiveConfirmation);

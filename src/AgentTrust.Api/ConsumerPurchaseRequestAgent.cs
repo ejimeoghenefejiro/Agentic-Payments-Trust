@@ -56,7 +56,7 @@ public static class PurchasePlanGuard
     public static bool TryBuildSingleProductPlan(string instruction,IReadOnlyList<Product> catalogue,out ConsumerPurchasePlan plan)
     {
         plan=null!;var budgetMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"(?:£|GBP\s*)(\d+(?:\.\d{1,2})?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var productMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(?:me\s+)?(.+?)(?=\s+(?:for\s+)?(?:my\s+)?budget\b|\s+on\s+a\s+budget\b|\s+under\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var productMatch=System.Text.RegularExpressions.Regex.Match(instruction,@"\bbuy\s+(?:me\s+)?(.+?)(?=\s+(?:for\s+)?(?:my\s+)?budget\b|\s+on\s+a\s+budget\b|\s+(?:under|within)\s+(?:£|GBP)|\s+(?:£|GBP)|[.!?]|$)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if(!budgetMatch.Success||!productMatch.Success)return false;var budget=decimal.Parse(budgetMatch.Groups[1].Value,System.Globalization.CultureInfo.InvariantCulture);var requested=productMatch.Groups[1].Value.Trim();if(requested.Length==0||requested.Contains(',')||System.Text.RegularExpressions.Regex.IsMatch(requested,@"\band\b|\bto make\b|\bfor\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+people\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
         var (query,quantity)=NormalizeProductRequest(requested);var product=catalogue.Where(x=>x.AvailableQuantity>=quantity&&(x.ProductId.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Description.Contains(query,StringComparison.OrdinalIgnoreCase)||x.Tags.Any(t=>t.Contains(query,StringComparison.OrdinalIgnoreCase)))).OrderBy(x=>x.UnitPrice).FirstOrDefault();
         if(product is null){plan=new(PurchasePlanningStatus.NeedsInput,"Product not found",$"I could not find an available merchant product matching '{query}'.",budget,"GBP",[],[$"Would you like a similar alternative to {query}?"],null,["search_catalogue"]);return true;}
@@ -143,6 +143,10 @@ public sealed class GroceryConsumerPurchasePlanner
         ConsumerPurchasePlan? plan=await BuildDomainClarification(completeInstruction,catalogue,token);
         if(plan is null&&PurchasePlanGuard.TryBuildExplicitProductListPlan(completeInstruction,catalogue,out var explicitPlan))
             plan=explicitPlan;
+        if(plan is null&&SupportsObjective(completeInstruction))
+            plan=await Fallback(completeInstruction,catalogue,token);
+        if(plan is null&&PurchasePlanGuard.TryBuildSingleProductPlan(completeInstruction,catalogue,out var directPlan))
+            plan=directPlan;
         if(plan is null&&AgentFactory.IsLiveModeConfigured)
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(TimeSpan.FromSeconds(_planningTimeoutSeconds));

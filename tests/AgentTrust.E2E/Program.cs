@@ -134,7 +134,6 @@ internal sealed class E2eRunner(E2eOptions options)
         var probes = new[]
         {
             ("Restaurant HTTP journey", "/api/consumer/restaurant/orders"),
-            ("Home-service HTTP journey", "/api/consumer/home-services/bookings"),
             ("Fulfilment status HTTP journey", "/api/consumer/fulfilments/probe"),
             ("Operator reconciliation HTTP journey", "/api/operations/reconciliation/probe")
         };
