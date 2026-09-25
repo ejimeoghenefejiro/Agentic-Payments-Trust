@@ -1,5 +1,6 @@
 using AgentTrust.Core.Models;
 using AgentTrust.Data;
+using AgentTrust.Commerce;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -30,6 +31,27 @@ public class PersistenceTests : IDisposable
     {
         _db.Dispose();
         _connection.Dispose();
+    }
+
+    [Fact]
+    public void OodaCyclePersistsStructuredEvidenceAndIsPrincipalIsolated()
+    {
+        var now = DateTimeOffset.Parse("2026-09-25T12:00:00Z");
+        var store = new EfCommerceOodaCycleStore(_db);
+        store.Save(new CommerceOodaCycle("ooda_1", "task_1", "principal_1", "purchase_1", now,
+            1, CommerceOodaStatus.Completed, "[{\"goalId\":\"meal\"}]", "[{\"stock\":2}]",
+            "[{\"productId\":\"value-item\"}]", "{\"selected\":\"value-item\"}",
+            "{\"quoteId\":\"quote_1\"}", "{\"passed\":true}", "GOAL_VERIFIED", now, now));
+
+        var reloaded = new EfCommerceOodaCycleStore(new AgentTrustDbContext(
+            new DbContextOptionsBuilder<AgentTrustDbContext>().UseSqlite(_connection).Options));
+        var cycle = reloaded.FindOwned("purchase_1", "principal_1");
+
+        Assert.NotNull(cycle);
+        Assert.Equal(CommerceOodaStatus.Completed, cycle!.Status);
+        Assert.Contains("value-item", cycle.AlternativesJson);
+        Assert.Contains("passed", cycle.ProofJson);
+        Assert.Null(reloaded.FindOwned("purchase_1", "principal_2"));
     }
 
     [Fact]

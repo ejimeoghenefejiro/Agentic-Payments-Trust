@@ -59,6 +59,13 @@ public sealed class CommercePurchaseTests
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalObserved");
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalProved");
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalChecked");
+        var cycle = fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-1");
+        Assert.NotNull(cycle);
+        Assert.Equal(CommerceOodaStatus.Completed, cycle.Status);
+        Assert.Equal("GOAL_VERIFIED", cycle.Outcome);
+        Assert.NotEqual("[]", cycle.ObservationsJson);
+        Assert.NotEqual("{}", cycle.ProofJson);
+        Assert.Null(fixture.OodaCycles.FindOwned(first.Execution.PurchaseIntentId, "principal-other"));
     }
 
     [Fact]
@@ -251,11 +258,13 @@ public sealed class CommercePurchaseTests
         var executions = new InMemoryPurchaseExecutionStore(); var usage = new InMemoryMandateUsageTracker();
         var auth = new HmacPurchaseAuthorisationService(RandomNumberGenerator.GetBytes(32)); var payments = new MockPlatformPaymentProcessor();
         var connector = new DemoGroceryConnector(auth, payments, catalogue); var audit = new InMemoryPurchaseAuditSink();
+        var oodaCycles = new InMemoryCommerceOodaCycleStore();
         var orchestrator = new AgentPurchaseOrchestrator(tasks, executions, mandates, usage, methods, authorities,
-            trust, auth, audit, new LivePurchaseGate(live ?? new LivePurchaseOptions()), new InMemoryOneOffAuthorisationStore());
-        return new Fixture(orchestrator, connector, payments, audit, mandates, methods);
+            trust, auth, audit, new LivePurchaseGate(live ?? new LivePurchaseOptions()), new InMemoryOneOffAuthorisationStore(), null, oodaCycles);
+        return new Fixture(orchestrator, connector, payments, audit, mandates, methods, oodaCycles);
     }
     private sealed record Fixture(AgentPurchaseOrchestrator Orchestrator, DemoGroceryConnector Connector,
         MockPlatformPaymentProcessor Payments, InMemoryPurchaseAuditSink Audit,
-        InMemoryMandateStore Mandates, InMemoryPaymentMethodStore PaymentMethods);
+        InMemoryMandateStore Mandates, InMemoryPaymentMethodStore PaymentMethods,
+        InMemoryCommerceOodaCycleStore OodaCycles);
 }

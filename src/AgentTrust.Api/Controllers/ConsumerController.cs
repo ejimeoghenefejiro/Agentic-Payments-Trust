@@ -34,11 +34,12 @@ public sealed class ConsumerController : ControllerBase
     private readonly ConsumerCommerceAgent _commerceAgent;private readonly ConsumerCommerceOperator _commerceOperator;private readonly IConfiguration _configuration;
     private readonly IConsumerPlanningStore _planning;private readonly IConsumerMemoryService _memory;private readonly MandateLimitChangeService _limitChanges;private readonly IMandateLimitChangeStore _limitChangeStore;private readonly IAuthorizationService _authorization;
     private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ICustomerRequestUnderstandingAgent _understanding;
+    private readonly ICommerceOodaCycleStore _oodaCycles;
     public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, MerchantConnectorRegistry connectors,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
-        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,ConsumerCommerceOperator commerceOperator,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_commerceOperator=commerceOperator;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding; }
+        IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,ConsumerCommerceOperator commerceOperator,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding,ICommerceOodaCycleStore oodaCycles)
+    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_commerceOperator=commerceOperator;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding;_oodaCycles=oodaCycles; }
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -73,6 +74,14 @@ public sealed class ConsumerController : ControllerBase
     }
     [HttpGet("tasks")] public ActionResult<IReadOnlyList<ConsumerPurchaseTask>> GetTasks() => Ok(_tasks.FindByPrincipal(PrincipalId()));
     [HttpGet("tasks/{id}")] public ActionResult<ConsumerPurchaseTask> GetTask(string id) => _tasks.FindOwned(id, PrincipalId()) is { } task ? Ok(task) : NotFound();
+    [HttpGet("tasks/{id}/ooda-cycles")]
+    public ActionResult<IReadOnlyList<CommerceOodaCycle>> GetOodaCycles(string id)
+    {
+        var principal = PrincipalId();
+        return _tasks.FindOwned(id, principal) is null
+            ? NotFound()
+            : Ok(_oodaCycles.FindByTaskOwned(id, principal));
+    }
     /// <summary>Run the purchase task through the deterministic trust boundary. Reusing the same scheduledFor value is idempotent.</summary>
     [HttpPost("tasks/{id}/run")]
     public async Task<ActionResult<PurchaseOrchestrationResult>> Run(string id, RunPurchaseRequest request, CancellationToken cancellationToken)

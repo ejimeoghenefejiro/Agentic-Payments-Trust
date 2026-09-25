@@ -293,6 +293,27 @@ public sealed class ConsumerPaymentMethodEntity
     public long Version { get; set; } = 1;
 }
 
+public sealed class CommerceOodaCycleEntity
+{
+    public string CycleId { get; set; } = "";
+    public string TaskId { get; set; } = "";
+    public string PrincipalId { get; set; } = "";
+    public string PurchaseIntentId { get; set; } = "";
+    public DateTimeOffset ScheduledFor { get; set; }
+    public int CycleNumber { get; set; }
+    public string Status { get; set; } = "Observing";
+    public string GoalJson { get; set; } = "[]";
+    public string ObservationsJson { get; set; } = "[]";
+    public string AlternativesJson { get; set; } = "[]";
+    public string DecisionJson { get; set; } = "{}";
+    public string ActionJson { get; set; } = "{}";
+    public string ProofJson { get; set; } = "{}";
+    public string? Outcome { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long Version { get; set; } = 1;
+}
+
 public sealed class ConsumerPlanningConversationEntity
 {
     public string ConversationId{get;set;}="";public string PrincipalId{get;set;}="";public string Objective{get;set;}="";public string Status{get;set;}="INVESTIGATING";public string StateJson{get;set;}="{}";public DateTimeOffset CreatedAt{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;

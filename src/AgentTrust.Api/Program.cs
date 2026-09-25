@@ -232,6 +232,7 @@ if (connectionString is not null)
     builder.Services.AddScoped<IConsumerPlanningStore, EfConsumerPlanningStore>();
     builder.Services.AddScoped<IConsumerMemoryStore, EfConsumerMemoryStore>();
     builder.Services.AddScoped<IConsumerMemoryService, ConsumerMemoryService>();
+    builder.Services.AddScoped<ICommerceOodaCycleStore, EfCommerceOodaCycleStore>();
     builder.Services.AddHostedService<ConsumerPilotWorker>();
 }
 else
@@ -251,6 +252,7 @@ else
     builder.Services.AddSingleton<IConsumerPlanningStore, InMemoryConsumerPlanningStore>();
     builder.Services.AddSingleton<IConsumerMemoryStore, InMemoryConsumerMemoryStore>();
     builder.Services.AddSingleton<IConsumerMemoryService, ConsumerMemoryService>();
+    builder.Services.AddSingleton<ICommerceOodaCycleStore, InMemoryCommerceOodaCycleStore>();
 }
 builder.Services.AddSingleton(sp => new LivePurchaseGate(new LivePurchaseOptions(
     builder.Configuration.GetValue("LivePurchase:Enabled", false),

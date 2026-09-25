@@ -1,4 +1,5 @@
 using AgentTrust.Consumer;
+using System.Text.Json;
 
 namespace AgentTrust.Commerce;
 
@@ -26,13 +27,67 @@ public sealed record CommerceGoalCheck(
     IReadOnlyList<CommerceGoalProof> Proofs,
     IReadOnlyList<string> Failures);
 
+public enum CommerceOodaStatus { Observing, Orienting, Deciding, Acting, Verifying, Completed, NeedsIntervention, Failed }
+
+public sealed record CommerceOodaCycle(
+    string CycleId,
+    string TaskId,
+    string PrincipalId,
+    string PurchaseIntentId,
+    DateTimeOffset ScheduledFor,
+    int CycleNumber,
+    CommerceOodaStatus Status,
+    string GoalJson,
+    string ObservationsJson,
+    string AlternativesJson,
+    string DecisionJson,
+    string ActionJson,
+    string ProofJson,
+    string? Outcome,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    long Version = 1);
+
+public interface ICommerceOodaCycleStore
+{
+    CommerceOodaCycle? FindOwned(string purchaseIntentId, string principalId);
+    IReadOnlyList<CommerceOodaCycle> FindByTaskOwned(string taskId, string principalId);
+    void Save(CommerceOodaCycle cycle);
+}
+
+public sealed class InMemoryCommerceOodaCycleStore : ICommerceOodaCycleStore
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, CommerceOodaCycle> _cycles = new();
+    public CommerceOodaCycle? FindOwned(string purchaseIntentId, string principalId)
+    {
+        lock (_gate) return _cycles.Values.SingleOrDefault(cycle =>
+            cycle.PurchaseIntentId == purchaseIntentId && cycle.PrincipalId == principalId);
+    }
+    public void Save(CommerceOodaCycle cycle)
+    {
+        lock (_gate) _cycles[cycle.CycleId] = cycle;
+    }
+    public IReadOnlyList<CommerceOodaCycle> FindByTaskOwned(string taskId, string principalId)
+    {
+        lock (_gate) return _cycles.Values
+            .Where(cycle => cycle.TaskId == taskId && cycle.PrincipalId == principalId)
+            .OrderByDescending(cycle => cycle.ScheduledFor).ToArray();
+    }
+}
+
+public sealed record CommerceGoalAttempt(
+    Basket Basket,
+    CommerceGoalProof? Proof,
+    IReadOnlyList<Product> ObservedAlternatives);
+
 /// <summary>
 /// A bounded Observe-Orient-Decide-Act loop for provider inventory. It may adapt the
 /// selected product, but it cannot relax quantity, price, substitution or financial controls.
 /// </summary>
 public sealed class CommerceGoalLoop
 {
-    public async Task<(Basket Basket, CommerceGoalProof? Proof)> SatisfyAsync(
+    public async Task<CommerceGoalAttempt> SatisfyAsync(
         CommerceGoal goal,
         Basket basket,
         ICommerceConnector connector,
@@ -79,13 +134,13 @@ public sealed class CommerceGoalLoop
                     cancellationToken);
                 var substituted = goal.PreferredProductId is not null
                     && !option.ProductId.Equals(goal.PreferredProductId, StringComparison.OrdinalIgnoreCase);
-                return (updated, new CommerceGoalProof(
+                return new CommerceGoalAttempt(updated, new CommerceGoalProof(
                     goal.GoalId,
                     option.ProductId,
                     goal.Quantity,
                     option.UnitPrice,
                     substituted,
-                    substituted ? "Available provider alternative selected." : "Requested goal matched live provider inventory."));
+                    substituted ? "Available provider alternative selected." : "Requested goal matched live provider inventory."), observed);
             }
             catch (InvalidOperationException)
             {
@@ -93,7 +148,7 @@ public sealed class CommerceGoalLoop
             }
         }
 
-        return (basket, null);
+        return new CommerceGoalAttempt(basket, null, observed);
     }
 
     public CommerceGoalCheck Check(

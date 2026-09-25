@@ -277,6 +277,82 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.ToTable("CheckoutExecutions");
                 });
 
+            modelBuilder.Entity("AgentTrust.Data.CommerceOodaCycleEntity", b =>
+                {
+                    b.Property<string>("CycleId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ActionJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("AlternativesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("CycleNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DecisionJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("GoalJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ObservationsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Outcome")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ProofJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PurchaseIntentId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("ScheduledFor")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CycleId");
+
+                    b.HasIndex("PurchaseIntentId")
+                        .IsUnique();
+
+                    b.HasIndex("PrincipalId", "UpdatedAt");
+
+                    b.HasIndex("Status", "UpdatedAt");
+
+                    b.ToTable("CommerceOodaCycles");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.ConnectedServiceEntity", b =>
                 {
                     b.Property<string>("Id")

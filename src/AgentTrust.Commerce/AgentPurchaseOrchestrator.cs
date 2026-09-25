@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
 using AgentTrust.Consumer;
 using AgentTrust.Core;
 using AgentTrust.Core.Models;
@@ -30,6 +31,7 @@ public sealed class AgentPurchaseOrchestrator
     private readonly IOneOffAuthorisationStore _oneOffs;
     private readonly ICommerceDurability _durability;
     private readonly CommerceGoalLoop _goalLoop = new();
+    private readonly ICommerceOodaCycleStore _oodaCycles;
     private readonly object _gate = new();
     private readonly Dictionary<string, PendingPurchase> _pending = new();
     private readonly Dictionary<string, string> _intentHashes = new();
@@ -41,12 +43,14 @@ public sealed class AgentPurchaseOrchestrator
         IMandateStore mandates, IMandateUsageTracker usage, IPaymentMethodStore paymentMethods,
         IDelegatedAuthorityStore authorities, TrustFramework trust,
         IPurchaseAuthorisationService authorisations, IPurchaseAuditSink audit, LivePurchaseGate liveGate,
-        IOneOffAuthorisationStore? oneOffs = null, ICommerceDurability? durability = null)
+        IOneOffAuthorisationStore? oneOffs = null, ICommerceDurability? durability = null,
+        ICommerceOodaCycleStore? oodaCycles = null)
     { _tasks = tasks; _executions = executions; _mandates = mandates; _usage = usage;
       _paymentMethods = paymentMethods; _authorities = authorities; _trust = trust;
       _authorisations = authorisations; _audit = audit; _liveGate = liveGate;
       _oneOffs = oneOffs ?? new InMemoryOneOffAuthorisationStore();
-      _durability = durability ?? new NullCommerceDurability(); }
+      _durability = durability ?? new NullCommerceDurability();
+      _oodaCycles = oodaCycles ?? new InMemoryCommerceOodaCycleStore(); }
 
     public async Task<PurchaseOrchestrationResult> RunAsync(string taskId, string authenticatedPrincipalId,
         DateTimeOffset scheduledFor, ICommerceConnector connector, LiveExecutionContext liveContext,
@@ -62,6 +66,12 @@ public sealed class AgentPurchaseOrchestrator
             Save(NewExecution(intentId, task, PurchaseExecutionState.BasketBuilding));
         }
         Audit("TaskTriggered", intentId, task.PrincipalId, null);
+
+        var ooda = _oodaCycles.FindOwned(intentId, task.PrincipalId) ?? new CommerceOodaCycle(
+            $"ooda_{intentId}", task.TaskId, task.PrincipalId, intentId, scheduledFor, 1,
+            CommerceOodaStatus.Observing, "[]", "[]", "[]", "{}", "{}", "{}", null,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        SaveOoda(ooda);
 
         try
         {
@@ -83,30 +93,52 @@ public sealed class AgentPurchaseOrchestrator
                 $"{task.TaskId}:{index}", requested.SearchTerm, requested.Quantity,
                 requested.PreferredProductId, requested.MaximumUnitPrice,
                 task.Preferences.Substitutions, requested.RequiredForOutcome)).ToArray();
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Orienting, goal: JsonSerializer.Serialize(goals));
             Audit("GoalOriented", intentId, task.PrincipalId, null);
             var basket = await connector.CreateBasketAsync(task.PrincipalId, cancellationToken);
             var proofs = new List<CommerceGoalProof>();
+            var observations = new List<object>();
             foreach (var goal in goals)
             {
                 var outcome = await _goalLoop.SatisfyAsync(goal, basket, connector, cancellationToken);
+                observations.Add(new { goal.GoalId, goal.SearchTerm, Alternatives = outcome.ObservedAlternatives.Select(x => new { x.ProductId, x.Description, x.UnitPrice, x.AvailableQuantity }) });
                 if (outcome.Proof is null)
                 {
-                    if (goal.RequiredForOutcome) return Denied(intentId, task, $"GOAL_UNSATISFIED:{goal.SearchTerm}");
+                    if (goal.RequiredForOutcome)
+                    {
+                        AdvanceOoda(ooda, CommerceOodaStatus.NeedsIntervention,
+                            observations: JsonSerializer.Serialize(observations), outcome: $"GOAL_UNSATISFIED:{goal.SearchTerm}");
+                        return Denied(intentId, task, $"GOAL_UNSATISFIED:{goal.SearchTerm}");
+                    }
                     Audit("GoalAdapted", intentId, task.PrincipalId, null);
                     continue;
                 }
                 basket = outcome.Basket;
                 proofs.Add(outcome.Proof);
             }
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Deciding,
+                observations: JsonSerializer.Serialize(observations), alternatives: JsonSerializer.Serialize(observations),
+                decision: JsonSerializer.Serialize(proofs));
             Audit("GoalDecisionMade", intentId, task.PrincipalId, null);
             Audit("BasketBuilt", intentId, task.PrincipalId, null);
             var deliveries = await connector.GetDeliveryOptionsAsync(basket.BasketId, cancellationToken);
             var delivery = deliveries.OrderBy(x => x.Fee).First();
             await connector.SelectDeliveryOptionAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
             var quote = await connector.GetQuoteAsync(basket.BasketId, delivery.DeliveryOptionId, cancellationToken);
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Acting, action: JsonSerializer.Serialize(new
+            {
+                quote.QuoteId, quote.MerchantId, quote.Currency, quote.TotalAmount, quote.ExpiresAt,
+                Items = quote.Items.Select(x => new { x.ProductId, x.Quantity, x.UnitPrice })
+            }));
             Audit("GoalActed", intentId, task.PrincipalId, null);
             var goalCheck = _goalLoop.Check(goals, proofs, quote, task.MaximumAmount);
-            if (!goalCheck.Passed) return Denied(intentId, task, goalCheck.Failures);
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Verifying, proof: JsonSerializer.Serialize(goalCheck));
+            if (!goalCheck.Passed)
+            {
+                AdvanceOoda(ooda, CommerceOodaStatus.NeedsIntervention, outcome: string.Join(',', goalCheck.Failures));
+                return Denied(intentId, task, goalCheck.Failures);
+            }
+            ooda = AdvanceOoda(ooda, CommerceOodaStatus.Completed, outcome: "GOAL_VERIFIED");
             Audit("GoalProved", intentId, task.PrincipalId, null);
             Audit("GoalChecked", intentId, task.PrincipalId, null);
             var intent = new PurchaseIntent(intentId, task.PrincipalId, task.AgentId, task.MandateId, task.TaskId,
@@ -141,8 +173,9 @@ public sealed class AgentPurchaseOrchestrator
             return await EvaluateAndExecute(intent, task, mandate, connector, reservation!.ReservationId,
                 null, cancellationToken);
         }
-        catch
+        catch (Exception exception)
         {
+            AdvanceOoda(ooda, CommerceOodaStatus.Failed, outcome: $"{exception.GetType().Name}:{exception.Message}");
             Update(intentId, PurchaseExecutionState.Unknown, ["EXECUTION_OUTCOME_UNKNOWN"]); throw;
         }
     }
@@ -233,6 +266,27 @@ public sealed class AgentPurchaseOrchestrator
                 _intentHashes.GetValueOrDefault(intent, "pending"), DateTimeOffset.UtcNow,
                 new Dictionary<string, string>()));
     }
+    private CommerceOodaCycle AdvanceOoda(CommerceOodaCycle cycle, CommerceOodaStatus status,
+        string? goal = null, string? observations = null, string? alternatives = null,
+        string? decision = null, string? action = null, string? proof = null, string? outcome = null)
+    {
+        var updated = cycle with
+        {
+            Status = status,
+            GoalJson = goal ?? cycle.GoalJson,
+            ObservationsJson = observations ?? cycle.ObservationsJson,
+            AlternativesJson = alternatives ?? cycle.AlternativesJson,
+            DecisionJson = decision ?? cycle.DecisionJson,
+            ActionJson = action ?? cycle.ActionJson,
+            ProofJson = proof ?? cycle.ProofJson,
+            Outcome = outcome ?? cycle.Outcome,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            Version = cycle.Version + 1
+        };
+        SaveOoda(updated);
+        return updated;
+    }
+    private void SaveOoda(CommerceOodaCycle cycle) => _oodaCycles.Save(cycle);
     private static string StableIntentId(string task, DateTimeOffset scheduled) => "purchase_" + Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes($"{task}|{scheduled:O}"))).ToLowerInvariant()[..32];
 }
