@@ -76,6 +76,46 @@ public sealed class ProviderDomainArchitectureTests
         Assert.Equal(PurchaseInteractionDecision.Execute,confirmed.InteractionDecision);
     }
 
+    [Fact]
+    public async Task CommerceAgentLoop_UsesExplicitExecutionConsentWithoutAskingAgain()
+    {
+        var connector=Grocery();var store=new InMemoryConsumerPlanningStore();
+        var configuration=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {{"ConsumerPilot:Planning:AgentLoopMaximumTurns","4"}}).Build();
+        var loop=new ConsumerCommerceAgentLoop(store,new TestAnalyst(),new BreakfastPlanner(),new AcceptingAuditor(),[],configuration);
+        var request=new ConsumerActionPlanningContext("principal-1",null,
+            "Find a good-value breakfast within £10.50 and proceed.",connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector));
+        var provider=new ProviderPlanningSession(connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector),connector);
+
+        var plan=await loop.RunAsync(request,provider,CancellationToken.None);
+
+        Assert.Equal(PurchaseInteractionDecision.Execute,plan.InteractionDecision);
+        Assert.Empty(plan.Questions);
+        Assert.DoesNotContain("Shall I go ahead",plan.Message,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CommerceAgentLoop_UsesStandingAutoProceedConsentForSafeProposal()
+    {
+        var connector=Grocery();var store=new InMemoryConsumerPlanningStore();
+        store.SavePolicy(new("principal-1","AUTO_PROCEED_WHEN_SAFE",false,false,DateTimeOffset.UtcNow));
+        var configuration=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {{"ConsumerPilot:Planning:AgentLoopMaximumTurns","4"}}).Build();
+        var loop=new ConsumerCommerceAgentLoop(store,new TestAnalyst(),new BreakfastPlanner(),new AcceptingAuditor(),[],configuration);
+        var request=new ConsumerActionPlanningContext("principal-1",null,
+            "Find a good-value breakfast within £10.50.",connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector));
+        var provider=new ProviderPlanningSession(connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector),connector);
+
+        var plan=await loop.RunAsync(request,provider,CancellationToken.None);
+
+        Assert.Equal(PurchaseInteractionDecision.Execute,plan.InteractionDecision);
+        Assert.Empty(plan.Questions);
+    }
+
     private sealed class TestAnalyst:ICommerceAnalystWorker
     {
         public Task<CustomerRequestUnderstanding> AnalyzeAsync(string instruction,string? openObjective,IReadOnlySet<string> capabilities,CancellationToken cancellationToken)=>

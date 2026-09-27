@@ -178,9 +178,19 @@ public sealed class ConsumerCommerceAgentLoop
                 if(audit.RequiresRevision){used.Add("auditor:revise");if(!string.IsNullOrWhiteSpace(audit.RevisionInstruction))evidence.Add(audit.RevisionInstruction);continue;}
                 if(!audit.Accepted)return RejectAudit(conversation,parsedBudget.Value,used,audit,now,turn);
                 var items=quote.Items.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray();
+                var interactionDecision=CanExecuteWithoutAnotherConfirmation(request.PrincipalId,analysis)
+                    ?PurchaseInteractionDecision.Execute
+                    :PurchaseInteractionDecision.Propose;
+                var message=string.IsNullOrWhiteSpace(decision.Message)
+                    ?$"{quote.MerchantName} verified the order at £{quote.Total:0.00}."
+                    :decision.Message.Trim();
+                message=interactionDecision==PurchaseInteractionDecision.Execute
+                    ?$"{message.TrimEnd(' ','?')} Proceeding with your confirmed instruction."
+                    :$"{message.TrimEnd(' ','?')} Shall I go ahead?";
                 var plan=new ConsumerPurchasePlan(PurchasePlanningStatus.Ready,decision.Summary,
-                    string.IsNullOrWhiteSpace(decision.Message)?$"{quote.MerchantName} verified the order at £{quote.Total:0.00}. Shall I go ahead?":decision.Message,
-                    parsedBudget.Value,quote.Currency,items,["Shall I go ahead?"],quote.Total,used,conversation.ConversationId,turn,PurchaseInteractionDecision.Propose);
+                    message,parsedBudget.Value,quote.Currency,items,
+                    interactionDecision==PurchaseInteractionDecision.Execute?[]:["Shall I go ahead?"],
+                    quote.Total,used,conversation.ConversationId,turn,interactionDecision);
                 used.Add("auditor:accepted");
                 used.Add($"auditor:proposal-hash:{CommerceProposalFingerprint.Hash(plan,quote)}");
                 plan=plan with{ToolsUsed=used.ToArray()};
@@ -210,6 +220,13 @@ public sealed class ConsumerCommerceAgentLoop
         _store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,_store.Turns(conversation.ConversationId).Count+1,"assistant","agent-loop",plan.Message,null,null,null,now));
         if(quote is not null)_store.ReplaceReservations(conversation.ConversationId,quote.Items.Select(x=>new ConsumerProductReservation(
             $"product_hold_{Guid.NewGuid():N}",conversation.ConversationId,x.ProductId,x.Quantity,x.UnitPrice,quote.Currency,"Reserved",now,quote.ExpiresAt)).ToArray());
+    }
+    private bool CanExecuteWithoutAnotherConfirmation(string principalId,CustomerRequestUnderstanding analysis)
+    {
+        var policy=_store.GetPolicy(principalId);
+        var consentedForThisRequest=analysis.RequestsExecution;
+        var standingConsent=policy.InteractionMode.Equals("AUTO_PROCEED_WHEN_SAFE",StringComparison.OrdinalIgnoreCase);
+        return (consentedForThisRequest||standingConsent)&&!policy.ShowBasketBeforePayment;
     }
     private static bool IsApproval(string value)=>System.Text.RegularExpressions.Regex.IsMatch(value.Trim(),@"^(?:yes|yes,?\s+please|go\s+ahead|confirm|proceed|buy\s+it|pay)[.!]?$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 }

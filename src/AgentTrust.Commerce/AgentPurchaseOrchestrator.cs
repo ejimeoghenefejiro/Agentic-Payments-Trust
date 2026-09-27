@@ -68,7 +68,7 @@ public sealed class AgentPurchaseOrchestrator
         {
             previousExecution=_executions.FindByIntent(intentId);
             if(previousExecution is not null&&previousExecution.State is not(PurchaseExecutionState.Failed or PurchaseExecutionState.Unknown))
-                return new PurchaseOrchestrationResult(previousExecution, null, null, null);
+                return ExistingResult(previousExecution,task.PrincipalId);
             if(previousExecution is null)Save(NewExecution(intentId, task, PurchaseExecutionState.BasketBuilding));
             else Save(previousExecution with{State=PurchaseExecutionState.BasketBuilding,Reasons=[],UpdatedAt=DateTimeOffset.UtcNow});
         }
@@ -201,6 +201,12 @@ public sealed class AgentPurchaseOrchestrator
             Update(intentId, PurchaseExecutionState.Unknown, ["EXECUTION_OUTCOME_UNKNOWN"]); throw;
         }
     }
+
+    private PurchaseOrchestrationResult ExistingResult(PurchaseExecution execution,string principalId) => new(
+        execution,
+        _durability.FindIntentOwned(execution.PurchaseIntentId,principalId),
+        _durability.FindAuthorisationOwned(execution.PurchaseIntentId,principalId),
+        _durability.FindReceiptByPurchaseOwned(execution.PurchaseIntentId,principalId));
 
     public async Task<PurchaseOrchestrationResult> ResolveAsync(string purchaseIntentId,
         string authenticatedPrincipalId, bool approve, string approver, CancellationToken cancellationToken = default,ICommerceConnector? recoveryConnector=null)

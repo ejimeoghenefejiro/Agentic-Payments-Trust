@@ -78,9 +78,13 @@ public sealed class ConsumerCommerceAgent
             return new(overBudget,quote,null,null,[]);
         }
 
+        var confirmationRequired=plan.InteractionDecision!=PurchaseInteractionDecision.Execute;
         plan=plan with{Currency=quote.Currency,Items=quote.Items.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray(),
-            EstimatedTotal=quote.Total,Message=$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Shall I go ahead?",
-            Questions=plan.InteractionDecision==PurchaseInteractionDecision.Execute?[]:["Shall I go ahead?"]};
+            EstimatedTotal=quote.Total,
+            Message=confirmationRequired
+                ?$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Shall I go ahead?"
+                :$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Proceeding with your confirmed instruction.",
+            Questions=confirmationRequired?["Shall I go ahead?"]:[]};
 
         var catalogue=await selectedConnector.SearchProductsAsync("",cancellationToken);
         _planning.ReplaceReservations(plan.ConversationId!,quote.Items.Select(item=>new ConsumerProductReservation(

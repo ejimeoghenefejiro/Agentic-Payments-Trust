@@ -94,6 +94,28 @@ public sealed class ConsumerController : ControllerBase
     [HttpGet("payment-methods")] public ActionResult<IReadOnlyList<AgentTrust.PaymentMethods.PaymentMethod>> PaymentMethods() => Ok(_paymentMethods.FindByPrincipal(PrincipalId()));
     [HttpGet("setup/status")]
     public ActionResult<ConsumerSetupStatus> SetupStatus()=>Ok(BuildSetupStatus(PrincipalId(),DateTimeOffset.UtcNow));
+    /// <summary>Read the authenticated customer's purchase-confirmation preferences.</summary>
+    [HttpGet("conversation-policy")]
+    public ActionResult<ConsumerConversationPolicyResponse> GetConversationPolicy()=>Ok(ToResponse(_planning.GetPolicy(PrincipalId())));
+    /// <summary>
+    /// Choose whether safe, fully verified proposals may execute without asking for another "yes".
+    /// This preference never bypasses clarification, audit, budget, authority, payment, allergy,
+    /// idempotency or step-up authentication controls.
+    /// </summary>
+    [HttpPut("conversation-policy"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerConversationPolicyResponse> UpdateConversationPolicy(UpdateConsumerConversationPolicyRequest request)
+    {
+        var principal=PrincipalId();var current=_planning.GetPolicy(principal);
+        var updated=current with
+        {
+            InteractionMode=request.AutoProceedWhenSafe?"AUTO_PROCEED_WHEN_SAFE":"CONFIRM_BEFORE_EXECUTION",
+            AskBeforeSubstitutions=request.AskBeforeSubstitutions,
+            ShowBasketBeforePayment=request.ShowBasketBeforePayment,
+            UpdatedAt=DateTimeOffset.UtcNow,
+            Version=current.Version+1
+        };
+        _planning.SavePolicy(updated);return Ok(ToResponse(updated));
+    }
     [HttpPost("memory/corrections")]
     public ActionResult<IReadOnlyList<ConsumerMemoryEntry>> CaptureMemory(ConsumerMemoryCorrectionRequest request)=>Ok(_memory.CaptureCorrections(PrincipalId(),request.Message));
     [HttpGet("memory/export")]
@@ -254,6 +276,9 @@ public sealed class ConsumerController : ControllerBase
         var customer=await new CustomerService(client).CreateAsync(new CustomerCreateOptions{Metadata=new Dictionary<string,string>{{"principal_id",principal}}},new RequestOptions{IdempotencyKey=$"agenttrust-customer-{digest}"},token);return customer.Id;
     }
     private static DateTimeOffset NextOccurrence(TaskScheduleRequest schedule,string timezone,DateTimeOffset now){if(!schedule.Frequency.Equals("Weekly",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Only Weekly is supported.");var zone=TimeZoneInfo.FindSystemTimeZoneById(timezone);var local=TimeZoneInfo.ConvertTime(now,zone);if(!Enum.TryParse<DayOfWeek>(schedule.DayOfWeek,true,out var day)||!TimeOnly.TryParse(schedule.LocalTime,out var time))throw new ArgumentException("Invalid weekly schedule.");var days=((int)day-(int)local.DayOfWeek+7)%7;var candidate=local.Date.AddDays(days).Add(time.ToTimeSpan());if(candidate<=local.DateTime)candidate=candidate.AddDays(7);return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(candidate,DateTimeKind.Unspecified),zone);}
+    private static ConsumerConversationPolicyResponse ToResponse(ConversationPolicy policy)=>new(
+        policy.InteractionMode=="AUTO_PROCEED_WHEN_SAFE",policy.AskBeforeSubstitutions,
+        policy.ShowBasketBeforePayment,policy.UpdatedAt,policy.Version);
     private sealed class RejectRawCardTokenizationProvider : ICardTokenizationProvider
     { public TokenizationResult Tokenize(string cardNumber, string cvv, int expiryMonth, int expiryYear) => throw new NotSupportedException("Raw card data is not accepted by this endpoint."); }
 }
@@ -273,3 +298,7 @@ public sealed record ConsumerSetupStep(int Order,string Resource,bool Complete,s
 public sealed record ConsumerSetupStatus(bool IsReady,IReadOnlyList<ConsumerSetupStep> RequiredSetupSteps,IReadOnlyList<ConsumerSetupStep> AllSteps);
 public sealed record ConsumerMemoryCorrectionRequest(string Message);
 public sealed record MandateLimitChangeRequest(decimal? PerTransactionLimit=null,decimal? WeeklyLimit=null,decimal? MonthlyLimit=null);
+public sealed record UpdateConsumerConversationPolicyRequest(bool AutoProceedWhenSafe,
+    bool AskBeforeSubstitutions=false,bool ShowBasketBeforePayment=false);
+public sealed record ConsumerConversationPolicyResponse(bool AutoProceedWhenSafe,
+    bool AskBeforeSubstitutions,bool ShowBasketBeforePayment,DateTimeOffset UpdatedAt,long Version);

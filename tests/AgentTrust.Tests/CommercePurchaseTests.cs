@@ -54,6 +54,9 @@ public sealed class CommercePurchaseTests
         Assert.NotNull(first.Receipt);
         Assert.Equal(1, fixture.Payments.SubmissionCount);
         Assert.Equal(first.Execution.ExecutionId, duplicate.Execution.ExecutionId);
+        Assert.Equal(first.Intent,duplicate.Intent);
+        Assert.Equal(first.Authorisation,duplicate.Authorisation);
+        Assert.Equal(first.Receipt,duplicate.Receipt);
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "TrustApproved");
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "PurchaseCompleted");
         Assert.Contains(fixture.Audit.Find(first.Execution.PurchaseIntentId), x => x.EventType == "GoalObserved");

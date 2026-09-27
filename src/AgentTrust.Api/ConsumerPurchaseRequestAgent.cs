@@ -191,8 +191,9 @@ public sealed class GroceryConsumerPurchasePlanner
                 plan=plan with{Status=PurchasePlanningStatus.NeedsInput,Message=violation,Items=[],Questions=["Please confirm an acceptable alternative or revise the constraint."]};
         }
         var explicitlyApproved=ContainsAny(instruction,"use your best judgement and proceed","proceed with this basket","confirm purchase","go ahead and pay");
+        var standingApproval=policy.InteractionMode.Equals("AUTO_PROCEED_WHEN_SAFE",StringComparison.OrdinalIgnoreCase)&&!policy.ShowBasketBeforePayment;
         var decision=plan.Status!=PurchasePlanningStatus.Ready?PurchaseInteractionDecision.Clarify
-            :explicitlyApproved?PurchaseInteractionDecision.Execute:PurchaseInteractionDecision.Propose;
+            :explicitlyApproved||standingApproval?PurchaseInteractionDecision.Execute:PurchaseInteractionDecision.Propose;
         plan=plan with{Currency="GBP",ConversationId=conversation.ConversationId,ReasoningTurns=plan.ReasoningTurns==0?plan.ToolsUsed.Count:plan.ReasoningTurns,InteractionDecision=decision};
         foreach(var call in PurchasePlanningPlugin.LastCalls){_store.Append(new($"planning_turn_{Guid.NewGuid():N}",conversation.ConversationId,sequence++,"tool","evidence",call.Output,call.Name,call.Input,call.Output,DateTimeOffset.UtcNow));state.ToolHistory.Add(call.Name);if(call.Name=="price_basket")state.AttemptedBaskets.Add(call.Output);}
         state.OpenQuestions.Clear();state.OpenQuestions.AddRange(plan.Questions);state.Hypotheses.Add(plan.Summary);if(plan.Status!=PurchasePlanningStatus.Ready&&plan.EstimatedTotal is not null)state.RejectedAlternatives.Add(plan.Message);state=state with{Status=plan.Status,LatestPlan=plan};
@@ -302,7 +303,7 @@ public sealed class GroceryConsumerPurchasePlanner
         if(ContainsAny(instruction,"you may make substitutions","substitutions are okay","approve substitutions"))ask=false;
         if(ContainsAny(instruction,"show me the basket before paying","show basket before payment"))show=true;
         if(ContainsAny(instruction,"use your best judgement and proceed","do not ask unless necessary","auto when safe"))show=false;
-        return current with{InteractionMode="AUTO_WHEN_SAFE",AskBeforeSubstitutions=ask,ShowBasketBeforePayment=show,UpdatedAt=now,Version=current.Version+1};
+        return current with{AskBeforeSubstitutions=ask,ShowBasketBeforePayment=show,UpdatedAt=now,Version=current.Version+1};
     }
     private static bool ContainsAny(string value,params string[] phrases)=>phrases.Any(x=>value.Contains(x,StringComparison.OrdinalIgnoreCase));
     private static bool IsApproval(string value)=>System.Text.RegularExpressions.Regex.IsMatch(value.Trim(),@"^(?:yes|yes,?\s+please|go\s+ahead|confirm|confirmed|proceed|buy\s+it|pay)(?:[.!])?$",System.Text.RegularExpressions.RegexOptions.IgnoreCase);

@@ -451,6 +451,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.True(execution.GetProperty("state").GetInt32()==(int)AgentTrust.Consumer.PurchaseExecutionState.Purchased,firstBody.ToString());
         var second=await _client.PostAsJsonAsync($"/api/consumer/tasks/{taskId}/run",new{scheduledFor=scheduled,liveMode=false,explicitLiveConfirmation=false});
         var secondBody=await second.Content.ReadFromJsonAsync<JsonElement>();Assert.Equal(executionId,secondBody.GetProperty("execution").GetProperty("executionId").GetString());
+        Assert.NotEqual(JsonValueKind.Null,secondBody.GetProperty("receipt").ValueKind);
+        Assert.Equal(firstBody.GetProperty("receipt").GetProperty("receiptId").GetString(),secondBody.GetProperty("receipt").GetProperty("receiptId").GetString());
         Assert.Equal(HttpStatusCode.OK,(await _client.GetAsync($"/api/consumer/purchases/{executionId}/receipt")).StatusCode);
         var audit=await _client.GetFromJsonAsync<JsonElement>($"/api/consumer/purchases/{executionId}/audit");Assert.True(audit.GetProperty("isValid").GetBoolean());Assert.True(audit.GetProperty("eventCount").GetInt32()>=8);
         using var outsider=_factory.CreateClient();outsider.DefaultRequestHeaders.Add("X-Test-Principal",$"other_{suffix}");
