@@ -124,6 +124,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("StepUp", policy => policy.RequireAuthenticatedUser()
         .AddRequirements(new StablePrincipalRequirement(), new StepUpRequirement()));
     options.AddPolicy("AuditAdmin", policy => policy.RequireAuthenticatedUser().RequireRole("audit.read"));
+    options.AddPolicy("AppAdmin", policy => policy.RequireAuthenticatedUser().RequireRole("app.admin"));
 });
 builder.Services.AddScoped<IAuthorizationHandler, StablePrincipalHandler>();
 builder.Services.AddScoped<IAuthorizationHandler, StepUpHandler>();
@@ -219,6 +220,7 @@ if (connectionString is not null)
 {
     builder.Services.AddScoped<IPaymentAttemptStore, EfPaymentAttemptStore>();
     builder.Services.AddScoped<IConsumerTaskStore, EfConsumerTaskStore>();
+    builder.Services.AddScoped<IConsumerRecipientStore, EfConsumerRecipientStore>();
     builder.Services.AddScoped<IConnectedServiceStore, EfConnectedServiceStore>();
     builder.Services.AddScoped<IPurchaseExecutionStore, EfPurchaseExecutionStore>();
     builder.Services.AddScoped<IMandateStore, EfMandateStore>();
@@ -239,6 +241,7 @@ else
 {
     builder.Services.AddSingleton<IPaymentAttemptStore, InMemoryPaymentAttemptStore>();
     builder.Services.AddSingleton<IConsumerTaskStore, InMemoryConsumerTaskStore>();
+    builder.Services.AddSingleton<IConsumerRecipientStore, InMemoryConsumerRecipientStore>();
     builder.Services.AddSingleton<IConnectedServiceStore, InMemoryConnectedServiceStore>();
     builder.Services.AddSingleton<IPurchaseExecutionStore, InMemoryPurchaseExecutionStore>();
     builder.Services.AddSingleton<IMandateStore, InMemoryMandateStore>();

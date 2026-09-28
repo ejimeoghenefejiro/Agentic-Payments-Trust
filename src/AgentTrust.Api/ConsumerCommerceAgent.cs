@@ -55,7 +55,12 @@ public sealed class ConsumerCommerceAgent
             var permittedMerchants=_mandates.FindByPrincipal(context.PrincipalId).Where(x=>x.IsActive(now)&&
                 string.Equals(x.Currency,plan.Currency,StringComparison.OrdinalIgnoreCase))
                 .Select(x=>x.Merchant).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var providers=_connectors.All.Where(x=>permittedMerchants.Contains(x.MerchantId)).ToArray();
+            var shoppingPolicy=_planning.GetShoppingDeliveryPolicy(context.PrincipalId);
+            var providers=_connectors.All.Where(x=>permittedMerchants.Contains(x.MerchantId)&&
+                !shoppingPolicy.ExcludedMerchants.Contains(x.MerchantId,StringComparer.OrdinalIgnoreCase)).ToArray();
+            if(shoppingPolicy.PreferredMerchants.Count>0&&!shoppingPolicy.AllowAlternativeMerchants)
+                providers=providers.Where(x=>shoppingPolicy.PreferredMerchants.Contains(x.MerchantId,StringComparer.OrdinalIgnoreCase)).ToArray();
+            if(providers.Length==0)return Failed(plan,"NO_ELIGIBLE_PROVIDER","No connected store satisfies your merchant and delivery policy.");
             var requested=plan.Items.Select(x=>new ProposedMerchantItem(x.SearchTerm,x.Quantity,true)).ToArray();
             var optimized=await new CommerceProviderOptimizer(_objectiveCapabilities).QuoteBestCurrentAsync(
                 context.PrincipalId,providers,requested,plan.MaximumAmount,plan.Currency,3,cancellationToken);
@@ -78,9 +83,12 @@ public sealed class ConsumerCommerceAgent
             return new(overBudget,quote,null,null,[]);
         }
 
-        var confirmationRequired=plan.InteractionDecision!=PurchaseInteractionDecision.Execute;
+        var policy=_planning.GetShoppingDeliveryPolicy(context.PrincipalId);
+        var nonPreferred=policy.PreferredMerchants.Count>0&&!policy.PreferredMerchants.Contains(quote.MerchantId,StringComparer.OrdinalIgnoreCase);
+        var confirmationRequired=plan.InteractionDecision!=PurchaseInteractionDecision.Execute||(nonPreferred&&policy.AskBeforeNonPreferredMerchant);
         plan=plan with{Currency=quote.Currency,Items=quote.Items.Select(x=>new PlannedPurchaseItem(x.ProductId,x.Quantity)).ToArray(),
             EstimatedTotal=quote.Total,
+            InteractionDecision=confirmationRequired?PurchaseInteractionDecision.Propose:PurchaseInteractionDecision.Execute,
             Message=confirmationRequired
                 ?$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Shall I go ahead?"
                 :$"{quote.MerchantName} verified the complete order at £{quote.Total:0.00}, including £{quote.DeliveryFee:0.00} delivery. Proceeding with your confirmed instruction.",

@@ -22,6 +22,42 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AgentTrust.Data.AdminNotificationProviderEntity", b =>
+                {
+                    b.Property<string>("Channel")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SecretReference")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Sender")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Channel");
+
+                    b.ToTable("AdminNotificationProviders");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.AgentEntity", b =>
                 {
                     b.Property<string>("AgentId")
@@ -972,6 +1008,9 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("RecipientId")
+                        .HasColumnType("text");
+
                     b.Property<string>("Schedule")
                         .IsRequired()
                         .HasColumnType("text");
@@ -999,9 +1038,137 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
 
                     b.HasIndex("NextExecutionAt");
 
+                    b.HasIndex("RecipientId");
+
                     b.HasIndex("PrincipalId", "Status");
 
                     b.ToTable("ConsumerPurchaseTasks");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerRecipientEntity", b =>
+                {
+                    b.Property<string>("RecipientId")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowSubstitutions")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("AllowedCategoriesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeliveryAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("DeliveryConsent")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExcludedCategoriesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExcludedMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("NotifyRecipient")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PayerNotification")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Phone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreferredMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Relationship")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("RecipientId");
+
+                    b.HasIndex("PrincipalId", "Active");
+
+                    b.ToTable("ConsumerRecipients");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerShoppingDeliveryPolicyEntity", b =>
+                {
+                    b.Property<string>("PrincipalId")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("AllowAlternativeMerchants")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowCrossBrandSubstitutions")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AllowSplitOrders")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("AskBeforeNonPreferredMerchant")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("DeliveryAddress")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExcludedMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("MaximumAdditionalDeliveryCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("MaximumDistanceMiles")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("numeric(8,2)");
+
+                    b.Property<string>("Postcode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreferredMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PrincipalId");
+
+                    b.ToTable("ConsumerShoppingDeliveryPolicies");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.DecisionFeedbackEntity", b =>
@@ -2590,6 +2757,14 @@ namespace AgentTrust.Data.Migrations.Postgres.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserLogins", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPurchaseTaskEntity", b =>
+                {
+                    b.HasOne("AgentTrust.Data.ConsumerRecipientEntity", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>

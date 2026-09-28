@@ -34,9 +34,11 @@ public sealed class DevelopmentTokenController(
         if(user is null||!await users.CheckPasswordAsync(user,request.Password))return Unauthorized();
         var principalId=user.PrincipalId;
         var now=DateTimeOffset.UtcNow;
-        var claims=new[]{new Claim("sub",subject),new Claim("name",request.DisplayName??user.UserName??subject),
+        var claims=new List<Claim>{new Claim("sub",subject),new Claim("name",request.DisplayName??user.UserName??subject),
             new Claim(AgentTrustClaimTypes.PrincipalId,principalId),new Claim(ClaimTypes.NameIdentifier,principalId),new Claim("amr","mfa"),
             new Claim("auth_time",now.ToUnixTimeSeconds().ToString())};
+        var admins=configuration.GetSection("Authentication:Development:AdminSubjects").Get<string[]>()??[];
+        if(admins.Contains(subject,StringComparer.OrdinalIgnoreCase))claims.Add(new Claim("role","app.admin"));
         var token=new JwtSecurityToken("urn:agenttrust:development","agenttrust-development",claims,now.UtcDateTime,now.AddHours(1).UtcDateTime,
             new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),SecurityAlgorithms.HmacSha256));
         return Ok(new{accessToken=new JwtSecurityTokenHandler().WriteToken(token),tokenType="Bearer",expiresAt=now.AddHours(1),principalId});

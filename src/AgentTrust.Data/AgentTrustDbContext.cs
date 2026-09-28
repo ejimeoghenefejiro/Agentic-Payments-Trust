@@ -24,6 +24,8 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<SemanticCaseEntity> SemanticCases => Set<SemanticCaseEntity>();
     public DbSet<DecisionFeedbackEntity> DecisionFeedback => Set<DecisionFeedbackEntity>();
     public DbSet<ConsumerProfileEntity> ConsumerProfiles => Set<ConsumerProfileEntity>();
+    public DbSet<ConsumerRecipientEntity> ConsumerRecipients => Set<ConsumerRecipientEntity>();
+    public DbSet<AdminNotificationProviderEntity> AdminNotificationProviders => Set<AdminNotificationProviderEntity>();
     public DbSet<ConnectedServiceEntity> ConnectedServices => Set<ConnectedServiceEntity>();
     public DbSet<ConsumerPurchaseTaskEntity> ConsumerPurchaseTasks => Set<ConsumerPurchaseTaskEntity>();
     public DbSet<PurchaseExecutionEntity> PurchaseExecutions => Set<PurchaseExecutionEntity>();
@@ -47,6 +49,7 @@ public sealed class AgentTrustDbContext : DbContext
     public DbSet<ConsumerProductReservationEntity> ConsumerProductReservations => Set<ConsumerProductReservationEntity>();
     public DbSet<ConsumerPreferenceMemoryEntity> ConsumerPreferenceMemories => Set<ConsumerPreferenceMemoryEntity>();
     public DbSet<ConsumerConversationPolicyEntity> ConsumerConversationPolicies => Set<ConsumerConversationPolicyEntity>();
+    public DbSet<ConsumerShoppingDeliveryPolicyEntity> ConsumerShoppingDeliveryPolicies => Set<ConsumerShoppingDeliveryPolicyEntity>();
     public DbSet<ConsumerMemoryEntity> ConsumerMemories => Set<ConsumerMemoryEntity>();
     public DbSet<ConsumerMemoryRetrievalAuditEntity> ConsumerMemoryRetrievalAudits => Set<ConsumerMemoryRetrievalAuditEntity>();
     public DbSet<ConsumerMemoryOutboxEntity> ConsumerMemoryOutbox => Set<ConsumerMemoryOutboxEntity>();
@@ -180,6 +183,14 @@ public sealed class AgentTrustDbContext : DbContext
     private static void ConfigureConsumerCommerce(ModelBuilder modelBuilder)
     {
         Configure<ConsumerProfileEntity>(modelBuilder, x => x.PrincipalId);
+        Configure<ConsumerRecipientEntity>(modelBuilder, x => x.RecipientId);
+        modelBuilder.Entity<ConsumerRecipientEntity>(b =>
+        {
+            b.HasIndex(x => new { x.PrincipalId, x.Active });
+            b.Property(x => x.Version).IsConcurrencyToken();
+        });
+        Configure<AdminNotificationProviderEntity>(modelBuilder, x => x.Channel);
+        modelBuilder.Entity<AdminNotificationProviderEntity>().Property(x => x.Version).IsConcurrencyToken();
         Configure<ConnectedServiceEntity>(modelBuilder, x => x.Id);
         modelBuilder.Entity<ConnectedServiceEntity>().HasIndex(x => new { x.PrincipalId, x.Provider, x.ExternalAccountReference }).IsUnique();
 
@@ -189,6 +200,7 @@ public sealed class AgentTrustDbContext : DbContext
             b.HasIndex(x => new { x.PrincipalId, x.Status });
             b.HasIndex(x => x.NextExecutionAt);
             b.Property(x => x.MaximumAmount).HasPrecision(18, 2);
+            b.HasOne<ConsumerRecipientEntity>().WithMany().HasForeignKey(x => x.RecipientId).OnDelete(DeleteBehavior.Restrict);
         });
 
         Configure<CommerceOodaCycleEntity>(modelBuilder, x => x.CycleId);
@@ -284,6 +296,7 @@ public sealed class AgentTrustDbContext : DbContext
         modelBuilder.Entity<ConsumerProductReservationEntity>(b => { b.HasIndex(x => new { x.ConversationId, x.ProductId }).IsUnique(); b.HasIndex(x => new { x.Status, x.ExpiresAt }); Money(b.Property(x => x.UnitPrice)); });
         Configure<ConsumerPreferenceMemoryEntity>(modelBuilder, x => x.MemoryId); modelBuilder.Entity<ConsumerPreferenceMemoryEntity>(b => b.HasIndex(x => new { x.PrincipalId, x.Key }).IsUnique());
         Configure<ConsumerConversationPolicyEntity>(modelBuilder, x => x.PrincipalId);
+        Configure<ConsumerShoppingDeliveryPolicyEntity>(modelBuilder, x => x.PrincipalId);modelBuilder.Entity<ConsumerShoppingDeliveryPolicyEntity>(b=>{b.Property(x=>x.MaximumDistanceMiles).HasPrecision(8,2);b.Property(x=>x.MaximumAdditionalDeliveryCost).HasPrecision(18,2);});
         Configure<ConsumerMemoryEntity>(modelBuilder, x => x.MemoryId);
         modelBuilder.Entity<ConsumerMemoryEntity>(b => { b.HasIndex(x => new { x.PrincipalId, x.Kind, x.Subject }); b.HasIndex(x => new { x.PrincipalId, x.Deleted, x.ExpiresAt }); });
         modelBuilder.Entity<ConsumerMemoryRetrievalAuditEntity>(b => { b.HasKey(x => x.AuditId); b.HasIndex(x => new { x.PrincipalId, x.RetrievedAt }); });

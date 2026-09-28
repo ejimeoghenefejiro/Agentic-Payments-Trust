@@ -30,7 +30,7 @@ public sealed class EfConsumerTaskStore : IConsumerTaskStore
         var row = _db.ConsumerPurchaseTasks.SingleOrDefault(x => x.TaskId == task.TaskId);
         if (row is null) { row = new ConsumerPurchaseTaskEntity { TaskId = task.TaskId, Version = 1 }; _db.Add(row); }
         else row.Version++;
-        row.PrincipalId = task.PrincipalId; row.AgentId = task.AgentId;
+        row.PrincipalId = task.PrincipalId; row.RecipientId = task.RecipientId; row.AgentId = task.AgentId;
         row.MerchantScopeJson = ConsumerStoreJson.Write(task.MerchantScope); row.Schedule = task.Schedule;
         row.Timezone = task.Timezone; row.MaximumAmount = task.MaximumAmount; row.Currency = task.Currency;
         row.ShoppingListJson = ConsumerStoreJson.Write(task.ShoppingList); row.PreferencesJson = ConsumerStoreJson.Write(task.Preferences);
@@ -41,12 +41,34 @@ public sealed class EfConsumerTaskStore : IConsumerTaskStore
     public ConsumerPurchaseTask? FindOwned(string id, string principal) => Map(_db.ConsumerPurchaseTasks.AsNoTracking().SingleOrDefault(x => x.TaskId == id && x.PrincipalId == principal));
     public IReadOnlyList<ConsumerPurchaseTask> FindByPrincipal(string principal) => _db.ConsumerPurchaseTasks.AsNoTracking().Where(x => x.PrincipalId == principal).Select(x => x).AsEnumerable().Select(Map).OfType<ConsumerPurchaseTask>().ToList();
     public IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50) => _db.ConsumerPurchaseTasks.AsNoTracking()
-        .Where(x => x.Status == "Active" && x.NextExecutionAt <= asOf).OrderBy(x => x.NextExecutionAt).Take(maximum)
-        .AsEnumerable().Select(Map).OfType<ConsumerPurchaseTask>().ToList();
+        .Where(x => x.Status == "Active" && x.NextExecutionAt <= asOf).OrderBy(x => x.NextExecutionAt)
+        .AsEnumerable().Select(Map).OfType<ConsumerPurchaseTask>().Where(x => !ConsumerTaskSchedule.HasEnded(x, asOf)).Take(maximum).ToList();
     private static ConsumerPurchaseTask? Map(ConsumerPurchaseTaskEntity? x) => x is null ? null : new(x.TaskId, x.PrincipalId, x.AgentId,
         ConsumerStoreJson.Read<HashSet<string>>(x.MerchantScopeJson), x.Schedule, x.Timezone, x.MaximumAmount, x.Currency,
         ConsumerStoreJson.Read<List<ShoppingListItem>>(x.ShoppingListJson), ConsumerStoreJson.Read<PurchasePreference>(x.PreferencesJson),
-        x.MandateId, x.PaymentMethodId, Enum.Parse<ConsumerTaskStatus>(x.Status), x.NextExecutionAt, x.CreatedAt);
+        x.MandateId, x.PaymentMethodId, Enum.Parse<ConsumerTaskStatus>(x.Status), x.NextExecutionAt, x.CreatedAt, x.RecipientId);
+}
+
+public sealed class EfConsumerRecipientStore : IConsumerRecipientStore
+{
+    private readonly AgentTrustDbContext _db;
+    public EfConsumerRecipientStore(AgentTrustDbContext db) => _db = db;
+    public void Save(ConsumerRecipient recipient)
+    {
+        var row = _db.ConsumerRecipients.SingleOrDefault(x => x.RecipientId == recipient.RecipientId);
+        if (row is null) { row = new ConsumerRecipientEntity { RecipientId = recipient.RecipientId }; _db.Add(row); }
+        row.PrincipalId=recipient.PrincipalId;row.Name=recipient.Name;row.Relationship=recipient.Relationship;
+        row.DeliveryAddress=recipient.DeliveryAddress;row.Email=recipient.Email;row.Phone=recipient.Phone;
+        row.DeliveryConsent=recipient.DeliveryConsent;row.AllowedCategoriesJson=ConsumerStoreJson.Write(recipient.AllowedCategories);
+        row.ExcludedCategoriesJson=ConsumerStoreJson.Write(recipient.ExcludedCategories);row.PreferredMerchantsJson=ConsumerStoreJson.Write(recipient.PreferredMerchants);
+        row.ExcludedMerchantsJson=ConsumerStoreJson.Write(recipient.ExcludedMerchants);row.AllowSubstitutions=recipient.AllowSubstitutions;
+        row.NotifyRecipient=recipient.NotifyRecipient;row.PayerNotification=recipient.PayerNotification;row.Active=recipient.Active;
+        row.CreatedAt=recipient.CreatedAt;row.UpdatedAt=recipient.UpdatedAt;row.Version=recipient.Version;_db.SaveChanges();
+    }
+    public ConsumerRecipient? FindOwned(string id,string principal)=>Map(_db.ConsumerRecipients.AsNoTracking().SingleOrDefault(x=>x.RecipientId==id&&x.PrincipalId==principal));
+    public IReadOnlyList<ConsumerRecipient> FindByPrincipal(string principal)=>_db.ConsumerRecipients.AsNoTracking().Where(x=>x.PrincipalId==principal).OrderBy(x=>x.Name).AsEnumerable().Select(Map).OfType<ConsumerRecipient>().ToList();
+    private static ConsumerRecipient? Map(ConsumerRecipientEntity? x)=>x is null?null:new(x.RecipientId,x.PrincipalId,x.Name,x.Relationship,x.DeliveryAddress,x.Email,x.Phone,x.DeliveryConsent,
+        ConsumerStoreJson.Read<List<string>>(x.AllowedCategoriesJson),ConsumerStoreJson.Read<List<string>>(x.ExcludedCategoriesJson),ConsumerStoreJson.Read<List<string>>(x.PreferredMerchantsJson),ConsumerStoreJson.Read<List<string>>(x.ExcludedMerchantsJson),x.AllowSubstitutions,x.NotifyRecipient,x.PayerNotification,x.Active,x.CreatedAt,x.UpdatedAt,x.Version);
 }
 
 public sealed class EfConnectedServiceStore : IConnectedServiceStore
@@ -212,6 +234,10 @@ public sealed class EfConsumerPlanningStore:IConsumerPlanningStore
         ?new(x.PrincipalId,x.InteractionMode,x.AskBeforeSubstitutions,x.ShowBasketBeforePayment,x.UpdatedAt,x.Version)
         :new(principal,"AUTO_WHEN_SAFE",false,false,DateTimeOffset.UtcNow);
     public void SavePolicy(ConversationPolicy policy){var x=_db.ConsumerConversationPolicies.SingleOrDefault(v=>v.PrincipalId==policy.PrincipalId);if(x is null){x=new(){PrincipalId=policy.PrincipalId};_db.Add(x);}x.InteractionMode=policy.InteractionMode;x.AskBeforeSubstitutions=policy.AskBeforeSubstitutions;x.ShowBasketBeforePayment=policy.ShowBasketBeforePayment;x.UpdatedAt=policy.UpdatedAt;x.Version=policy.Version;_db.SaveChanges();}
+    public ShoppingDeliveryPolicy GetShoppingDeliveryPolicy(string principal)=>_db.ConsumerShoppingDeliveryPolicies.AsNoTracking().SingleOrDefault(x=>x.PrincipalId==principal)is{} x
+        ?new(x.PrincipalId,x.DeliveryAddress,x.Postcode,System.Text.Json.JsonSerializer.Deserialize<string[]>(x.PreferredMerchantsJson)??[],System.Text.Json.JsonSerializer.Deserialize<string[]>(x.ExcludedMerchantsJson)??[],x.MaximumDistanceMiles,x.AllowAlternativeMerchants,x.MaximumAdditionalDeliveryCost,x.AllowSplitOrders,x.AllowCrossBrandSubstitutions,x.AskBeforeNonPreferredMerchant,x.UpdatedAt,x.Version)
+        :new(principal,null,null,[],[],5,true,0,false,true,true,DateTimeOffset.UtcNow);
+    public void SaveShoppingDeliveryPolicy(ShoppingDeliveryPolicy policy){var x=_db.ConsumerShoppingDeliveryPolicies.SingleOrDefault(v=>v.PrincipalId==policy.PrincipalId);if(x is null){x=new(){PrincipalId=policy.PrincipalId};_db.Add(x);}x.DeliveryAddress=policy.DeliveryAddress;x.Postcode=policy.Postcode;x.PreferredMerchantsJson=System.Text.Json.JsonSerializer.Serialize(policy.PreferredMerchants);x.ExcludedMerchantsJson=System.Text.Json.JsonSerializer.Serialize(policy.ExcludedMerchants);x.MaximumDistanceMiles=policy.MaximumDistanceMiles;x.AllowAlternativeMerchants=policy.AllowAlternativeMerchants;x.MaximumAdditionalDeliveryCost=policy.MaximumAdditionalDeliveryCost;x.AllowSplitOrders=policy.AllowSplitOrders;x.AllowCrossBrandSubstitutions=policy.AllowCrossBrandSubstitutions;x.AskBeforeNonPreferredMerchant=policy.AskBeforeNonPreferredMerchant;x.UpdatedAt=policy.UpdatedAt;x.Version=policy.Version;_db.SaveChanges();}
     private static ConsumerPlanningConversation Map(ConsumerPlanningConversationEntity x)=>new(x.ConversationId,x.PrincipalId,x.Objective,x.Status,x.StateJson,x.CreatedAt,x.UpdatedAt,x.Version);
 }
 

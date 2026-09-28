@@ -25,7 +25,7 @@ namespace AgentTrust.Api.Controllers;
 [ApiController, Route("api/consumer"), Authorize(Policy = "Consumer")]
 public sealed class ConsumerController : ControllerBase
 {
-    private readonly IConsumerTaskStore _tasks; private readonly IPurchaseExecutionStore _purchases;
+    private readonly IConsumerTaskStore _tasks; private readonly IConsumerRecipientStore _recipients; private readonly IPurchaseExecutionStore _purchases;
     private readonly IPaymentMethodStore _paymentMethods; private readonly AgentPurchaseOrchestrator _orchestrator;
     private readonly ICommerceConnector _connector;
     private readonly IMandateStore _mandates; private readonly ICommerceDurability _durability; private readonly IPurchaseAuditSink _audit;
@@ -35,11 +35,31 @@ public sealed class ConsumerController : ControllerBase
     private readonly IConsumerPlanningStore _planning;private readonly IConsumerMemoryService _memory;private readonly MandateLimitChangeService _limitChanges;private readonly IMandateLimitChangeStore _limitChangeStore;private readonly IAuthorizationService _authorization;
     private readonly IReadOnlyList<IObjectiveExpansionCapability> _objectiveCapabilities;private readonly ICustomerRequestUnderstandingAgent _understanding;
     private readonly ICommerceOodaCycleStore _oodaCycles;
-    public ConsumerController(IConsumerTaskStore tasks, IPurchaseExecutionStore purchases,
+    public ConsumerController(IConsumerTaskStore tasks, IConsumerRecipientStore recipients, IPurchaseExecutionStore purchases,
         IPaymentMethodStore paymentMethods, AgentPurchaseOrchestrator orchestrator, MerchantConnectorRegistry connectors,
         IMandateStore mandates, ICommerceDurability durability, IPurchaseAuditSink audit,IScheduledOccurrenceStore occurrences,
         IAgentRegistry agents,IPrincipalBindingStore bindings,IPrincipalStore principals,ConsumerCommerceAgent commerceAgent,ConsumerCommerceOperator commerceOperator,IConfiguration configuration,IConsumerPlanningStore planning,IConsumerMemoryService memory,MandateLimitChangeService limitChanges,IMandateLimitChangeStore limitChangeStore,IAuthorizationService authorization,IEnumerable<IObjectiveExpansionCapability> objectiveCapabilities,ICustomerRequestUnderstandingAgent understanding,ICommerceOodaCycleStore oodaCycles)
-    { _tasks = tasks; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_commerceOperator=commerceOperator;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding;_oodaCycles=oodaCycles; }
+    { _tasks = tasks; _recipients=recipients; _purchases = purchases; _paymentMethods = paymentMethods; _orchestrator = orchestrator; _connector = connectors.All.Single(); _mandates=mandates;_durability=durability;_audit=audit;_occurrences=occurrences;_agents=agents;_bindings=bindings;_principals=principals;_commerceAgent=commerceAgent;_commerceOperator=commerceOperator;_configuration=configuration;_planning=planning;_memory=memory;_limitChanges=limitChanges;_limitChangeStore=limitChangeStore;_authorization=authorization;_objectiveCapabilities=objectiveCapabilities.ToArray();_understanding=understanding;_oodaCycles=oodaCycles; }
+
+    [HttpGet("recipients")]
+    public ActionResult<IReadOnlyList<ConsumerRecipient>> GetRecipients()=>Ok(_recipients.FindByPrincipal(PrincipalId()));
+    [HttpPost("recipients"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerRecipient> CreateRecipient(UpsertConsumerRecipientRequest request)
+    {
+        if(string.IsNullOrWhiteSpace(request.Name)||string.IsNullOrWhiteSpace(request.DeliveryAddress))return BadRequest("Recipient name and delivery address are required.");
+        if(!request.DeliveryConsent)return BadRequest("Consent to receive deliveries is required before scheduling support.");
+        var now=DateTimeOffset.UtcNow;var recipient=new ConsumerRecipient($"recipient_{Guid.NewGuid():N}",PrincipalId(),request.Name.Trim(),request.Relationship?.Trim(),request.DeliveryAddress.Trim(),request.Email?.Trim(),request.Phone?.Trim(),true,request.AllowedCategories,request.ExcludedCategories,request.PreferredMerchants,request.ExcludedMerchants,request.AllowSubstitutions,request.NotifyRecipient,request.PayerNotification,true,now,now);
+        _recipients.Save(recipient);return CreatedAtAction(nameof(GetRecipients),recipient);
+    }
+    [HttpPut("recipients/{id}"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerRecipient> UpdateRecipient(string id,UpsertConsumerRecipientRequest request)
+    {
+        var current=_recipients.FindOwned(id,PrincipalId());if(current is null)return NotFound();
+        if(string.IsNullOrWhiteSpace(request.Name)||string.IsNullOrWhiteSpace(request.DeliveryAddress))return BadRequest("Recipient name and delivery address are required.");
+        var updated=current with{Name=request.Name.Trim(),Relationship=request.Relationship?.Trim(),DeliveryAddress=request.DeliveryAddress.Trim(),Email=request.Email?.Trim(),Phone=request.Phone?.Trim(),DeliveryConsent=request.DeliveryConsent,AllowedCategories=request.AllowedCategories,ExcludedCategories=request.ExcludedCategories,PreferredMerchants=request.PreferredMerchants,ExcludedMerchants=request.ExcludedMerchants,AllowSubstitutions=request.AllowSubstitutions,NotifyRecipient=request.NotifyRecipient,PayerNotification=request.PayerNotification,UpdatedAt=DateTimeOffset.UtcNow,Version=current.Version+1};_recipients.Save(updated);return Ok(updated);
+    }
+    [HttpPost("recipients/{id}/deactivate"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerRecipient> DeactivateRecipient(string id){var current=_recipients.FindOwned(id,PrincipalId());if(current is null)return NotFound();var updated=current with{Active=false,UpdatedAt=DateTimeOffset.UtcNow,Version=current.Version+1};_recipients.Save(updated);foreach(var task in _tasks.FindByPrincipal(PrincipalId()).Where(x=>x.RecipientId==id&&x.Status==ConsumerTaskStatus.Active)){_tasks.Save(task with{Status=ConsumerTaskStatus.Paused});}return Ok(updated);}
 
     [HttpPost("agents"),Authorize(Policy="StepUp")]
     public ActionResult<AgentIdentity> CreateAgent(CreateConsumerAgentRequest request)
@@ -56,6 +76,8 @@ public sealed class ConsumerController : ControllerBase
     public ActionResult<ConsumerPurchaseTask> CreateTask(CreateConsumerTaskRequest request)
     {
         var principal = PrincipalId();
+        ConsumerRecipient? recipient=null;if(!string.IsNullOrWhiteSpace(request.RecipientId)){recipient=_recipients.FindOwned(request.RecipientId,principal);if(recipient is null||!recipient.Active)return BadRequest("Select an active recipient owned by this account.");if(!recipient.DeliveryConsent)return BadRequest("The recipient has not consented to deliveries.");}
+        if(request.EndDate is{} endDate&&endDate.Date<DateTimeOffset.UtcNow.Date)return BadRequest("End date cannot be in the past.");
         if (_mandates.Find(request.MandateId) is not { } mandate || mandate.PrincipalId != principal) return Forbid();
         if (_paymentMethods.Find(request.PaymentMethodId) is not { } method || method.PrincipalId != principal) return Forbid();
         var merchant=NormalizeMerchant(request.MerchantId);
@@ -63,13 +85,14 @@ public sealed class ConsumerController : ControllerBase
             ||!string.Equals(mandate.Currency,request.Currency,StringComparison.OrdinalIgnoreCase))return BadRequest("Task scope must match the mandate.");
         if(request.MaximumAmount<=0||request.MaximumAmount>mandate.PerTransactionLimit)return BadRequest("Maximum amount exceeds the standing mandate.");
         var next=NextOccurrence(request.Schedule,request.Timezone,DateTimeOffset.UtcNow);
+        var deliveryPreferences=new Dictionary<string,string>{{"instruction",request.Instruction},{"recipientType",request.RecipientType},{"recipientName",request.RecipientName??""},{"relationship",request.Relationship??""},{"payerReviewsBasket",request.PayerReviewsBasket.ToString()},{"recipientMaySuggestChanges",request.RecipientMaySuggestChanges.ToString()},{"preferredStores",string.Join(',',request.PreferredStores)},{"excludedStores",string.Join(',',request.ExcludedStores)},{"endDate",request.EndDate?.ToString("O")??""}};
         var task = new ConsumerPurchaseTask($"ctask_{Guid.NewGuid():N}", principal, mandate.AgentId,
             new HashSet<string>([merchant],StringComparer.OrdinalIgnoreCase), $"Weekly:{request.Schedule.DayOfWeek}:{request.Schedule.LocalTime}", request.Timezone,
             request.MaximumAmount, request.Currency, request.ShoppingList.Select(x=>new ShoppingListItem(x.Query,x.Quantity,x.PreferredProductId,x.MaximumUnitPrice,x.RequiredForOutcome)).ToList(),
-            new PurchasePreference(request.DeliveryAddressReference??"dev-address", null,
-                request.SubstitutionPolicy.Allowed?SubstitutionPolicy.SameOrLowerPrice:SubstitutionPolicy.Never,new Dictionary<string,string>{{"instruction",request.Instruction}}),
+            new PurchasePreference(recipient?.DeliveryAddress??request.DeliveryAddressReference??"dev-address", null,
+                request.SubstitutionPolicy.Allowed?SubstitutionPolicy.SameOrLowerPrice:SubstitutionPolicy.Never,deliveryPreferences),
             request.MandateId, request.PaymentMethodId, ConsumerTaskStatus.Active,
-            next, DateTimeOffset.UtcNow);
+            next, DateTimeOffset.UtcNow, recipient?.RecipientId);
         _tasks.Save(task); return CreatedAtAction(nameof(GetTask), new { id = task.TaskId }, task);
     }
     [HttpGet("tasks")] public ActionResult<IReadOnlyList<ConsumerPurchaseTask>> GetTasks() => Ok(_tasks.FindByPrincipal(PrincipalId()));
@@ -91,7 +114,42 @@ public sealed class ConsumerController : ControllerBase
       } catch (UnauthorizedAccessException) { return Forbid(); } }
     [HttpPost("tasks/{id}/cancel"),Authorize(Policy="StepUp")]
     public ActionResult<ConsumerPurchaseTask> CancelTask(string id){var task=_tasks.FindOwned(id,PrincipalId());if(task is null)return NotFound();task=task with{Status=ConsumerTaskStatus.Cancelled};_tasks.Save(task);return Ok(task);}
+    [HttpPost("tasks/{id}/pause"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerPurchaseTask> PauseTask(string id){var task=_tasks.FindOwned(id,PrincipalId());if(task is null)return NotFound();task=task with{Status=ConsumerTaskStatus.Paused};_tasks.Save(task);return Ok(task);}
+    [HttpPost("tasks/{id}/resume"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerPurchaseTask> ResumeTask(string id){var task=_tasks.FindOwned(id,PrincipalId());if(task is null)return NotFound();if(ConsumerTaskSchedule.HasEnded(task,DateTimeOffset.UtcNow))return Conflict(new{code="RECURRING_ORDER_ENDED",message="Change the end date before resuming this order."});task=task with{Status=ConsumerTaskStatus.Active,NextExecutionAt=NextOccurrence(ParseSchedule(task.Schedule),task.Timezone,DateTimeOffset.UtcNow)};_tasks.Save(task);return Ok(task);}
+    [HttpPut("tasks/{id}"),Authorize(Policy="StepUp")]
+    public ActionResult<ConsumerPurchaseTask> UpdateTask(string id,UpdateConsumerTaskRequest request)
+    {
+        var task=_tasks.FindOwned(id,PrincipalId());if(task is null)return NotFound();var mandate=_mandates.Find(task.MandateId);
+        ConsumerRecipient? recipient=null;if(!string.IsNullOrWhiteSpace(request.RecipientId)){recipient=_recipients.FindOwned(request.RecipientId,PrincipalId());if(recipient is null||!recipient.Active||!recipient.DeliveryConsent)return BadRequest("Select an active recipient who has consented to deliveries.");}
+        if(request.EndDate is{} endDate&&endDate.Date<DateTimeOffset.UtcNow.Date)return BadRequest("End date cannot be in the past.");
+        if(mandate is null||request.MaximumAmount<=0||request.MaximumAmount>mandate.PerTransactionLimit)return BadRequest("Maximum amount exceeds the standing mandate.");
+        var preferences=new Dictionary<string,string>(task.Preferences.DeliveryPreferences){{"instruction",request.Instruction},{"recipientType",request.RecipientType},{"recipientName",request.RecipientName??""},{"relationship",request.Relationship??""},{"payerReviewsBasket",request.PayerReviewsBasket.ToString()},{"recipientMaySuggestChanges",request.RecipientMaySuggestChanges.ToString()},{"preferredStores",string.Join(',',request.PreferredStores)},{"excludedStores",string.Join(',',request.ExcludedStores)},{"endDate",request.EndDate?.ToString("O")??""}};
+        task=task with{RecipientId=recipient?.RecipientId,Schedule=$"{request.Schedule.Frequency}:{request.Schedule.DayOfWeek}:{request.Schedule.LocalTime}",Timezone=request.Timezone,MaximumAmount=request.MaximumAmount,ShoppingList=request.ShoppingList.Select(x=>new ShoppingListItem(x.Query,x.Quantity,x.PreferredProductId,x.MaximumUnitPrice,x.RequiredForOutcome)).ToList(),Preferences=new PurchasePreference(recipient?.DeliveryAddress??request.DeliveryAddressReference,task.Preferences.RequestedDeliveryWindow,request.SubstitutionPolicy.Allowed?SubstitutionPolicy.SameOrLowerPrice:SubstitutionPolicy.Never,preferences),NextExecutionAt=NextOccurrence(request.Schedule,request.Timezone,DateTimeOffset.UtcNow)};
+        _tasks.Save(task);return Ok(task);
+    }
     [HttpGet("payment-methods")] public ActionResult<IReadOnlyList<AgentTrust.PaymentMethods.PaymentMethod>> PaymentMethods() => Ok(_paymentMethods.FindByPrincipal(PrincipalId()));
+    [HttpPost("payment-methods/{id}/activate"), Authorize(Policy = "StepUp")]
+    public ActionResult<AgentTrust.PaymentMethods.PaymentMethod> ActivatePaymentMethod(string id)
+    {
+        var method=_paymentMethods.Find(id);
+        if(method is null)return NotFound();
+        if(method.PrincipalId!=PrincipalId())return Forbid();
+        if(method.ExpiryYear<DateTimeOffset.UtcNow.Year||(method.ExpiryYear==DateTimeOffset.UtcNow.Year&&method.ExpiryMonth<DateTimeOffset.UtcNow.Month))
+            return Conflict(new{code="PAYMENT_METHOD_EXPIRED",message="An expired payment method cannot be activated."});
+        var active=method with{Status=PaymentMethodStatus.Active};
+        _paymentMethods.Save(active);return Ok(active);
+    }
+    [HttpPost("payment-methods/{id}/revoke"), Authorize(Policy = "StepUp")]
+    public ActionResult<AgentTrust.PaymentMethods.PaymentMethod> RevokePaymentMethod(string id)
+    {
+        var method=_paymentMethods.Find(id);
+        if(method is null)return NotFound();
+        if(method.PrincipalId!=PrincipalId())return Forbid();
+        var revoked=method with{Status=PaymentMethodStatus.Revoked};
+        _paymentMethods.Save(revoked);return Ok(revoked);
+    }
     [HttpGet("setup/status")]
     public ActionResult<ConsumerSetupStatus> SetupStatus()=>Ok(BuildSetupStatus(PrincipalId(),DateTimeOffset.UtcNow));
     /// <summary>Read the authenticated customer's purchase-confirmation preferences.</summary>
@@ -115,6 +173,20 @@ public sealed class ConsumerController : ControllerBase
             Version=current.Version+1
         };
         _planning.SavePolicy(updated);return Ok(ToResponse(updated));
+    }
+    [HttpGet("shopping-delivery-policy")]
+    public ActionResult<ShoppingDeliveryPolicy> GetShoppingDeliveryPolicy()=>Ok(_planning.GetShoppingDeliveryPolicy(PrincipalId()));
+    [HttpPut("shopping-delivery-policy"),Authorize(Policy="StepUp")]
+    public ActionResult<ShoppingDeliveryPolicy> UpdateShoppingDeliveryPolicy(UpdateShoppingDeliveryPolicyRequest request)
+    {
+        if(request.MaximumDistanceMiles<=0||request.MaximumDistanceMiles>100)return BadRequest("Maximum distance must be between 0 and 100 miles.");
+        if(request.MaximumAdditionalDeliveryCost<0)return BadRequest("Maximum additional delivery cost cannot be negative.");
+        var principal=PrincipalId();var current=_planning.GetShoppingDeliveryPolicy(principal);
+        var preferred=request.PreferredMerchants.Where(x=>!string.IsNullOrWhiteSpace(x)).Select(x=>x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var excluded=request.ExcludedMerchants.Where(x=>!string.IsNullOrWhiteSpace(x)).Select(x=>x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if(preferred.Intersect(excluded,StringComparer.OrdinalIgnoreCase).Any())return BadRequest("A store cannot be both preferred and excluded.");
+        var updated=new ShoppingDeliveryPolicy(principal,request.DeliveryAddress?.Trim(),request.Postcode?.Trim().ToUpperInvariant(),preferred,excluded,request.MaximumDistanceMiles,request.AllowAlternativeMerchants,request.MaximumAdditionalDeliveryCost,request.AllowSplitOrders,request.AllowCrossBrandSubstitutions,request.AskBeforeNonPreferredMerchant,DateTimeOffset.UtcNow,current.Version+1);
+        _planning.SaveShoppingDeliveryPolicy(updated);return Ok(updated);
     }
     [HttpPost("memory/corrections")]
     public ActionResult<IReadOnlyList<ConsumerMemoryEntry>> CaptureMemory(ConsumerMemoryCorrectionRequest request)=>Ok(_memory.CaptureCorrections(PrincipalId(),request.Message));
@@ -276,6 +348,7 @@ public sealed class ConsumerController : ControllerBase
         var customer=await new CustomerService(client).CreateAsync(new CustomerCreateOptions{Metadata=new Dictionary<string,string>{{"principal_id",principal}}},new RequestOptions{IdempotencyKey=$"agenttrust-customer-{digest}"},token);return customer.Id;
     }
     private static DateTimeOffset NextOccurrence(TaskScheduleRequest schedule,string timezone,DateTimeOffset now){if(!schedule.Frequency.Equals("Weekly",StringComparison.OrdinalIgnoreCase))throw new ArgumentException("Only Weekly is supported.");var zone=TimeZoneInfo.FindSystemTimeZoneById(timezone);var local=TimeZoneInfo.ConvertTime(now,zone);if(!Enum.TryParse<DayOfWeek>(schedule.DayOfWeek,true,out var day)||!TimeOnly.TryParse(schedule.LocalTime,out var time))throw new ArgumentException("Invalid weekly schedule.");var days=((int)day-(int)local.DayOfWeek+7)%7;var candidate=local.Date.AddDays(days).Add(time.ToTimeSpan());if(candidate<=local.DateTime)candidate=candidate.AddDays(7);return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(candidate,DateTimeKind.Unspecified),zone);}
+    private static TaskScheduleRequest ParseSchedule(string value){var parts=value.Split(':',3);return new(parts.ElementAtOrDefault(0)??"Weekly",parts.ElementAtOrDefault(1)??"Friday",parts.ElementAtOrDefault(2)??"18:00");}
     private static ConsumerConversationPolicyResponse ToResponse(ConversationPolicy policy)=>new(
         policy.InteractionMode=="AUTO_PROCEED_WHEN_SAFE",policy.AskBeforeSubstitutions,
         policy.ShowBasketBeforePayment,policy.UpdatedAt,policy.Version);
@@ -283,10 +356,23 @@ public sealed class ConsumerController : ControllerBase
     { public TokenizationResult Tokenize(string cardNumber, string cvv, int expiryMonth, int expiryYear) => throw new NotSupportedException("Raw card data is not accepted by this endpoint."); }
 }
 
-public sealed record CreateConsumerTaskRequest(string Instruction,string MerchantId,string MandateId,string PaymentMethodId,string Currency,decimal MaximumAmount,string Timezone,TaskScheduleRequest Schedule,IReadOnlyList<TaskShoppingItemRequest> ShoppingList,TaskSubstitutionRequest SubstitutionPolicy,string? DeliveryAddressReference=null);
+public sealed record CreateConsumerTaskRequest(string Instruction,string MerchantId,string MandateId,string PaymentMethodId,string Currency,decimal MaximumAmount,string Timezone,TaskScheduleRequest Schedule,IReadOnlyList<TaskShoppingItemRequest> ShoppingList,TaskSubstitutionRequest SubstitutionPolicy,string? DeliveryAddressReference=null,string? RecipientId=null,string RecipientType="SELF",string? RecipientName=null,string? Relationship=null,DateTimeOffset? EndDate=null,bool PayerReviewsBasket=false,bool RecipientMaySuggestChanges=false,IReadOnlyList<string>? PreferredStores=null,IReadOnlyList<string>? ExcludedStores=null)
+{
+    public IReadOnlyList<string> PreferredStores { get; init; }=PreferredStores??[];
+    public IReadOnlyList<string> ExcludedStores { get; init; }=ExcludedStores??[];
+}
+public sealed record UpdateConsumerTaskRequest(string Instruction,decimal MaximumAmount,string Timezone,TaskScheduleRequest Schedule,IReadOnlyList<TaskShoppingItemRequest> ShoppingList,TaskSubstitutionRequest SubstitutionPolicy,string DeliveryAddressReference,string? RecipientId=null,string RecipientType="SELF",string? RecipientName=null,string? Relationship=null,DateTimeOffset? EndDate=null,bool PayerReviewsBasket=false,bool RecipientMaySuggestChanges=false,IReadOnlyList<string>? PreferredStores=null,IReadOnlyList<string>? ExcludedStores=null)
+{
+    public IReadOnlyList<string> PreferredStores { get; init; }=PreferredStores??[];
+    public IReadOnlyList<string> ExcludedStores { get; init; }=ExcludedStores??[];
+}
 public sealed record TaskScheduleRequest(string Frequency,string DayOfWeek,string LocalTime);
 public sealed record TaskShoppingItemRequest(string Query,int Quantity,string? PreferredProductId=null,decimal? MaximumUnitPrice=null,bool RequiredForOutcome=true);
 public sealed record TaskSubstitutionRequest(bool Allowed,decimal MaximumAdditionalAmount=0);
+public sealed record UpsertConsumerRecipientRequest(string Name,string? Relationship,string DeliveryAddress,string? Email,string? Phone,bool DeliveryConsent,bool AllowSubstitutions,bool NotifyRecipient,string PayerNotification,IReadOnlyList<string>? AllowedCategories=null,IReadOnlyList<string>? ExcludedCategories=null,IReadOnlyList<string>? PreferredMerchants=null,IReadOnlyList<string>? ExcludedMerchants=null)
+{
+    public IReadOnlyList<string> AllowedCategories { get; init; }=AllowedCategories??[];public IReadOnlyList<string> ExcludedCategories { get; init; }=ExcludedCategories??[];public IReadOnlyList<string> PreferredMerchants { get; init; }=PreferredMerchants??[];public IReadOnlyList<string> ExcludedMerchants { get; init; }=ExcludedMerchants??[];
+}
 public sealed record RunPurchaseRequest(DateTimeOffset? ScheduledFor=null, bool LiveMode = false, bool ExplicitLiveConfirmation = false);
 public sealed record RunPilotRequest(string TaskId, DateTimeOffset ScheduledFor, bool ExplicitLiveConfirmation);
 public sealed record ProviderPaymentMethodRequest(string Provider, string ProviderToken, string CardBrand,
@@ -302,3 +388,7 @@ public sealed record UpdateConsumerConversationPolicyRequest(bool AutoProceedWhe
     bool AskBeforeSubstitutions=false,bool ShowBasketBeforePayment=false);
 public sealed record ConsumerConversationPolicyResponse(bool AutoProceedWhenSafe,
     bool AskBeforeSubstitutions,bool ShowBasketBeforePayment,DateTimeOffset UpdatedAt,long Version);
+public sealed record UpdateShoppingDeliveryPolicyRequest(string? DeliveryAddress,string? Postcode,
+    IReadOnlyList<string> PreferredMerchants,IReadOnlyList<string> ExcludedMerchants,decimal MaximumDistanceMiles,
+    bool AllowAlternativeMerchants,decimal MaximumAdditionalDeliveryCost,bool AllowSplitOrders,
+    bool AllowCrossBrandSubstitutions,bool AskBeforeNonPreferredMerchant);

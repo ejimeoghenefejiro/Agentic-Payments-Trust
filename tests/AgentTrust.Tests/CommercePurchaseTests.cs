@@ -309,6 +309,17 @@ public sealed class CommercePurchaseTests
         Assert.DoesNotContain("Stripe", project, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void RecipientsAreScopedToTheirFinancialPrincipal()
+    {
+        var now=DateTimeOffset.UtcNow;var store=new InMemoryConsumerRecipientStore();
+        store.Save(new ConsumerRecipient("recipient-1","payer-1","Mother","Parent","Manchester M6",null,null,true,["groceries"],["alcohol"],["Sainsburys"],[],true,true,"OnCompletion",true,now,now));
+
+        Assert.NotNull(store.FindOwned("recipient-1","payer-1"));
+        Assert.Null(store.FindOwned("recipient-1","payer-2"));
+        Assert.Empty(store.FindByPrincipal("payer-2"));
+    }
+
     private static Fixture Build(decimal maximum, MandateStatus status = MandateStatus.Active,
         LivePurchaseOptions? live = null,decimal taskBudget=70,IEnumerable<Product>? catalogue=null,
         string? preferredProductId=null,SubstitutionPolicy substitutionPolicy=SubstitutionPolicy.SameOrLowerPrice,

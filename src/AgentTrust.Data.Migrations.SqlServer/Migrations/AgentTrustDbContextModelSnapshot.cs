@@ -22,6 +22,42 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("AgentTrust.Data.AdminNotificationProviderEntity", b =>
+                {
+                    b.Property<string>("Channel")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SecretReference")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Sender")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Channel");
+
+                    b.ToTable("AdminNotificationProviders");
+                });
+
             modelBuilder.Entity("AgentTrust.Data.AgentEntity", b =>
                 {
                     b.Property<string>("AgentId")
@@ -974,6 +1010,9 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<string>("RecipientId")
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<string>("Schedule")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -1001,9 +1040,137 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
 
                     b.HasIndex("NextExecutionAt");
 
+                    b.HasIndex("RecipientId");
+
                     b.HasIndex("PrincipalId", "Status");
 
                     b.ToTable("ConsumerPurchaseTasks");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerRecipientEntity", b =>
+                {
+                    b.Property<string>("RecipientId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowSubstitutions")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("AllowedCategoriesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("DeliveryAddress")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("DeliveryConsent")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExcludedCategoriesJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExcludedMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("NotifyRecipient")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PayerNotification")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Phone")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreferredMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PrincipalId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Relationship")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("RecipientId");
+
+                    b.HasIndex("PrincipalId", "Active");
+
+                    b.ToTable("ConsumerRecipients");
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerShoppingDeliveryPolicyEntity", b =>
+                {
+                    b.Property<string>("PrincipalId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("AllowAlternativeMerchants")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowCrossBrandSubstitutions")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AllowSplitOrders")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AskBeforeNonPreferredMerchant")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("DeliveryAddress")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExcludedMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("MaximumAdditionalDeliveryCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("MaximumDistanceMiles")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<string>("Postcode")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreferredMerchantsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PrincipalId");
+
+                    b.ToTable("ConsumerShoppingDeliveryPolicies");
                 });
 
             modelBuilder.Entity("AgentTrust.Data.DecisionFeedbackEntity", b =>
@@ -2593,6 +2760,14 @@ namespace AgentTrust.Data.Migrations.SqlServer.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserLogins", (string)null);
+                });
+
+            modelBuilder.Entity("AgentTrust.Data.ConsumerPurchaseTaskEntity", b =>
+                {
+                    b.HasOne("AgentTrust.Data.ConsumerRecipientEntity", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("AgentTrust.Data.FinancialMandateEntity", b =>

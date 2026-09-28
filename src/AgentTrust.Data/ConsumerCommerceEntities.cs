@@ -11,6 +11,41 @@ public sealed class ConsumerProfileEntity
     public long Version { get; set; } = 1;
 }
 
+public sealed class ConsumerRecipientEntity
+{
+    public string RecipientId { get; set; } = "";
+    public string PrincipalId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Relationship { get; set; }
+    public string DeliveryAddress { get; set; } = "";
+    public string? Email { get; set; }
+    public string? Phone { get; set; }
+    public bool DeliveryConsent { get; set; }
+    public string AllowedCategoriesJson { get; set; } = "[]";
+    public string ExcludedCategoriesJson { get; set; } = "[]";
+    public string PreferredMerchantsJson { get; set; } = "[]";
+    public string ExcludedMerchantsJson { get; set; } = "[]";
+    public bool AllowSubstitutions { get; set; }
+    public bool NotifyRecipient { get; set; }
+    public string PayerNotification { get; set; } = "OnCompletion";
+    public bool Active { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long Version { get; set; } = 1;
+}
+
+public sealed class AdminNotificationProviderEntity
+{
+    public string Channel { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string Sender { get; set; } = "";
+    public string SecretReference { get; set; } = "";
+    public bool Enabled { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public string UpdatedBy { get; set; } = "";
+    public long Version { get; set; } = 1;
+}
+
 public sealed class ConnectedServiceEntity
 {
     public string Id { get; set; } = "";
@@ -30,6 +65,7 @@ public sealed class ConsumerPurchaseTaskEntity
 {
     public string TaskId { get; set; } = "";
     public string PrincipalId { get; set; } = "";
+    public string? RecipientId { get; set; }
     public string AgentId { get; set; } = "";
     public string MerchantScopeJson { get; set; } = "[]";
     public string Schedule { get; set; } = "";
@@ -340,6 +376,10 @@ public sealed class ConsumerPreferenceMemoryEntity
 public sealed class ConsumerConversationPolicyEntity
 {
     public string PrincipalId{get;set;}="";public string InteractionMode{get;set;}="AUTO_WHEN_SAFE";public bool AskBeforeSubstitutions{get;set;}public bool ShowBasketBeforePayment{get;set;}public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
+}
+public sealed class ConsumerShoppingDeliveryPolicyEntity
+{
+    public string PrincipalId{get;set;}="";public string? DeliveryAddress{get;set;}public string? Postcode{get;set;}public string PreferredMerchantsJson{get;set;}="[]";public string ExcludedMerchantsJson{get;set;}="[]";public decimal MaximumDistanceMiles{get;set;}=5;public bool AllowAlternativeMerchants{get;set;}=true;public decimal MaximumAdditionalDeliveryCost{get;set;}public bool AllowSplitOrders{get;set;}public bool AllowCrossBrandSubstitutions{get;set;}=true;public bool AskBeforeNonPreferredMerchant{get;set;}=true;public DateTimeOffset UpdatedAt{get;set;}public long Version{get;set;}=1;
 }
 public sealed class ConsumerMemoryEntity
 {

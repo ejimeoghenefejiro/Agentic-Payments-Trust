@@ -14,6 +14,12 @@ public enum PurchaseExecutionState
 }
 
 public sealed record ConsumerProfile(string PrincipalId, string DisplayName, string Timezone, DateTimeOffset CreatedAt);
+public sealed record ConsumerRecipient(string RecipientId, string PrincipalId, string Name, string? Relationship,
+    string DeliveryAddress, string? Email, string? Phone, bool DeliveryConsent,
+    IReadOnlyList<string> AllowedCategories, IReadOnlyList<string> ExcludedCategories,
+    IReadOnlyList<string> PreferredMerchants, IReadOnlyList<string> ExcludedMerchants,
+    bool AllowSubstitutions, bool NotifyRecipient, string PayerNotification,
+    bool Active, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, long Version = 1);
 public sealed record ConnectedService(string Id, string PrincipalId, string Provider,
     string ExternalAccountReference, string ConnectionType, string? CredentialReference,
     ConnectedServiceStatus Status, IReadOnlySet<string> Capabilities, DateTimeOffset CreatedAt,
@@ -26,7 +32,17 @@ public sealed record ConsumerPurchaseTask(string TaskId, string PrincipalId, str
     IReadOnlySet<string> MerchantScope, string Schedule, string Timezone, decimal MaximumAmount,
     string Currency, IReadOnlyList<ShoppingListItem> ShoppingList, PurchasePreference Preferences,
     string MandateId, string PaymentMethodId, ConsumerTaskStatus Status, DateTimeOffset NextExecutionAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt, string? RecipientId = null);
+
+public static class ConsumerTaskSchedule
+{
+    public static bool HasEnded(ConsumerPurchaseTask task, DateTimeOffset asOf)
+    {
+        if (!task.Preferences.DeliveryPreferences.TryGetValue("endDate", out var value)
+            || !DateTimeOffset.TryParse(value, out var endDate)) return false;
+        return endDate.Date < asOf.Date;
+    }
+}
 public sealed record PurchaseExecution(string ExecutionId, string TaskId, string PrincipalId,
     string PurchaseIntentId, PurchaseExecutionState State, string? TransactionId,
     string? ProviderReference, string? RequiredAction, IReadOnlyList<string> Reasons,
@@ -40,6 +56,10 @@ public sealed record ConsumerProductReservation(string ReservationId,string Conv
     decimal UnitPrice,string Currency,string Status,DateTimeOffset ReservedAt,DateTimeOffset ExpiresAt,long Version=1);
 public sealed record ConversationPolicy(string PrincipalId,string InteractionMode,bool AskBeforeSubstitutions,
     bool ShowBasketBeforePayment,DateTimeOffset UpdatedAt,long Version=1);
+public sealed record ShoppingDeliveryPolicy(string PrincipalId,string? DeliveryAddress,string? Postcode,
+    IReadOnlyList<string> PreferredMerchants,IReadOnlyList<string> ExcludedMerchants,decimal MaximumDistanceMiles,
+    bool AllowAlternativeMerchants,decimal MaximumAdditionalDeliveryCost,bool AllowSplitOrders,
+    bool AllowCrossBrandSubstitutions,bool AskBeforeNonPreferredMerchant,DateTimeOffset UpdatedAt,long Version=1);
 public interface IConsumerPlanningStore
 {
     ConsumerPlanningConversation Create(string principalId,string objective,string stateJson,DateTimeOffset now);
@@ -54,6 +74,8 @@ public interface IConsumerPlanningStore
     void Remember(string principalId,string key,string value,string sourceConversationId,DateTimeOffset now);
     ConversationPolicy GetPolicy(string principalId);
     void SavePolicy(ConversationPolicy policy);
+    ShoppingDeliveryPolicy GetShoppingDeliveryPolicy(string principalId);
+    void SaveShoppingDeliveryPolicy(ShoppingDeliveryPolicy policy);
 }
 
 public interface IConsumerTaskStore
@@ -62,6 +84,12 @@ public interface IConsumerTaskStore
     ConsumerPurchaseTask? FindOwned(string taskId, string principalId);
     IReadOnlyList<ConsumerPurchaseTask> FindByPrincipal(string principalId);
     IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50);
+}
+public interface IConsumerRecipientStore
+{
+    void Save(ConsumerRecipient recipient);
+    ConsumerRecipient? FindOwned(string recipientId, string principalId);
+    IReadOnlyList<ConsumerRecipient> FindByPrincipal(string principalId);
 }
 public interface IConnectedServiceStore
 {
@@ -82,7 +110,15 @@ public sealed class InMemoryConsumerTaskStore : IConsumerTaskStore
     public void Save(ConsumerPurchaseTask task) { lock (_gate) _items[task.TaskId] = task; }
     public ConsumerPurchaseTask? FindOwned(string id, string principal) { lock (_gate) return _items.GetValueOrDefault(id) is { } t && t.PrincipalId == principal ? t : null; }
     public IReadOnlyList<ConsumerPurchaseTask> FindByPrincipal(string principal) { lock (_gate) return _items.Values.Where(t => t.PrincipalId == principal).ToList(); }
-    public IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50) { lock (_gate) return _items.Values.Where(t => t.Status == ConsumerTaskStatus.Active && t.NextExecutionAt <= asOf).OrderBy(t => t.NextExecutionAt).Take(maximum).ToList(); }
+    public IReadOnlyList<ConsumerPurchaseTask> FindDue(DateTimeOffset asOf, int maximum = 50) { lock (_gate) return _items.Values.Where(t => t.Status == ConsumerTaskStatus.Active && t.NextExecutionAt <= asOf && !ConsumerTaskSchedule.HasEnded(t, asOf)).OrderBy(t => t.NextExecutionAt).Take(maximum).ToList(); }
+}
+public sealed class InMemoryConsumerRecipientStore : IConsumerRecipientStore
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, ConsumerRecipient> _items = new();
+    public void Save(ConsumerRecipient recipient) { lock (_gate) _items[recipient.RecipientId] = recipient; }
+    public ConsumerRecipient? FindOwned(string id, string principal) { lock (_gate) return _items.GetValueOrDefault(id) is { } x && x.PrincipalId == principal ? x : null; }
+    public IReadOnlyList<ConsumerRecipient> FindByPrincipal(string principal) { lock (_gate) return _items.Values.Where(x => x.PrincipalId == principal).OrderBy(x => x.Name).ToList(); }
 }
 public sealed class InMemoryConnectedServiceStore : IConnectedServiceStore
 {
@@ -109,9 +145,11 @@ public sealed class InMemoryConsumerPlanningStore:IConsumerPlanningStore
     public IReadOnlyList<ConsumerPlanningTurn> Turns(string id){lock(_gate)return _turns.Where(x=>x.ConversationId==id).OrderBy(x=>x.Sequence).ToList();}
     public void ReplaceReservations(string id,IReadOnlyList<ConsumerProductReservation> rows){lock(_gate){_reservations.RemoveAll(x=>x.ConversationId==id);_reservations.AddRange(rows);}}
     public IReadOnlyList<ConsumerProductReservation> Reservations(string id){lock(_gate)return _reservations.Where(x=>x.ConversationId==id).ToList();}
-    private readonly Dictionary<(string Principal,string Key),string> _preferences=new();private readonly Dictionary<string,ConversationPolicy> _policies=new();
+    private readonly Dictionary<(string Principal,string Key),string> _preferences=new();private readonly Dictionary<string,ConversationPolicy> _policies=new();private readonly Dictionary<string,ShoppingDeliveryPolicy> _shoppingPolicies=new();
     public IReadOnlyDictionary<string,string> Preferences(string principal){lock(_gate)return _preferences.Where(x=>x.Key.Principal==principal).ToDictionary(x=>x.Key.Key,x=>x.Value);}
     public void Remember(string principal,string key,string value,string source,DateTimeOffset now){lock(_gate)_preferences[(principal,key)]=value;}
     public ConversationPolicy GetPolicy(string principal){lock(_gate)return _policies.GetValueOrDefault(principal)??new(principal,"AUTO_WHEN_SAFE",false,false,DateTimeOffset.UtcNow);}
     public void SavePolicy(ConversationPolicy policy){lock(_gate)_policies[policy.PrincipalId]=policy;}
+    public ShoppingDeliveryPolicy GetShoppingDeliveryPolicy(string principal){lock(_gate)return _shoppingPolicies.GetValueOrDefault(principal)??new(principal,null,null,[],[],5,true,0,false,true,true,DateTimeOffset.UtcNow);}
+    public void SaveShoppingDeliveryPolicy(ShoppingDeliveryPolicy policy){lock(_gate)_shoppingPolicies[policy.PrincipalId]=policy;}
 }

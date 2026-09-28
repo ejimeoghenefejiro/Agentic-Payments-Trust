@@ -1,0 +1,21 @@
+{
+  "AgentTrust.Agents, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Agents",
+  "AgentTrust.Api, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Api",
+  "AgentTrust.Commerce, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Commerce",
+  "AgentTrust.Connectors, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Connectors",
+  "AgentTrust.Consumer, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Consumer",
+  "AgentTrust.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Core",
+  "AgentTrust.Data, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Data",
+  "AgentTrust.Data.Migrations.Postgres, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Data.Migrations.Postgres",
+  "AgentTrust.Data.Migrations.SqlServer, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Data.Migrations.SqlServer",
+  "AgentTrust.Evidence, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Evidence",
+  "AgentTrust.Intelligence, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Intelligence",
+  "AgentTrust.Mandates, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Mandates",
+  "AgentTrust.Orchestration, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Orchestration",
+  "AgentTrust.PaymentMethods, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.PaymentMethods",
+  "AgentTrust.Payments, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Payments",
+  "AgentTrust.Policy, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Policy",
+  "AgentTrust.Runner, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Runner",
+  "AgentTrust.Scheduling, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Scheduling",
+  "AgentTrust.Tasks, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Users\\fenajiro\\Documents\\Codex\\Payment Research\\Agentic-Payments-Trust\\src\\AgentTrust.Tasks"
+}
