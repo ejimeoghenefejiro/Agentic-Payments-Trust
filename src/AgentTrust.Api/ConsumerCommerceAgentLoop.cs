@@ -148,7 +148,7 @@ public sealed class ConsumerCommerceAgentLoop
 
         var conversation=existing??_store.Create(request.PrincipalId,request.Instruction,"{}",now);
         var tools=new ConnectorMerchantPlanningToolset(connector,request.PrincipalId,"GBP",_expanders);
-        var candidates=new Dictionary<string,Product>(StringComparer.OrdinalIgnoreCase);var evidence=new List<string>();
+        var candidates=new Dictionary<string,Product>(StringComparer.OrdinalIgnoreCase);var evidence=new List<string>();decimal? lowestQuotedTotal=null;
         var used=new List<string>{"analyst:get_customer_context","analyst:discover_providers"};
         var preferences=_store.Preferences(request.PrincipalId);
         for(var turn=1;turn<=_maximumTurns;turn++)
@@ -171,7 +171,7 @@ public sealed class ConsumerCommerceAgentLoop
             {
                 var requested=decision.Items.Select(x=>new ProposedMerchantItem(x.Concept,x.Quantity,x.AllowSubstitution)).ToArray();
                 used.Add("get_authoritative_quote");var quote=await tools.QuoteAsync(requested,token);
-                if(quote.Total>parsedBudget.Value){used.Add("revise_proposal");evidence.Add($"authoritative total {quote.Total:0.00} exceeds budget {parsedBudget:0.00}");continue;}
+                if(quote.Total>parsedBudget.Value){lowestQuotedTotal=lowestQuotedTotal is null?quote.Total:Math.Min(lowestQuotedTotal.Value,quote.Total);used.Add("revise_proposal");evidence.Add($"authoritative total {quote.Total:0.00} exceeds budget {parsedBudget:0.00}");continue;}
                 used.Add("check_execution_readiness");used.Add("prepare_purchase");
                 var audit=await _auditor.AuditAsync(context,decision,quote,token);used.Add("auditor:review");
                 foreach(var finding in audit.Findings)evidence.Add($"audit:{finding}");
@@ -198,6 +198,14 @@ public sealed class ConsumerCommerceAgentLoop
             }
             catch(Exception ex) when(ex is KeyNotFoundException or InvalidOperationException or ArgumentException)
             {used.Add("revise_proposal");evidence.Add($"quote rejected: {ex.Message}");}
+        }
+        if(lowestQuotedTotal is not null)
+        {
+            var shortfall=lowestQuotedTotal.Value-parsedBudget.Value;
+            var overBudget=new ConsumerPurchasePlan(PurchasePlanningStatus.Impossible,"The verified basket exceeds the budget",
+                $"The lowest verified basket is £{lowestQuotedTotal:0.00}, which is £{shortfall:0.00} above your £{parsedBudget:0.00} budget. Increase the budget or change the request.",parsedBudget.Value,"GBP",[],
+                [$"Increase the budget to at least £{lowestQuotedTotal:0.00} or change the basket."],lowestQuotedTotal,used,conversation.ConversationId,_maximumTurns,PurchaseInteractionDecision.Clarify);
+            Save(conversation,overBudget,null,now);return overBudget;
         }
         var failed=new ConsumerPurchasePlan(PurchasePlanningStatus.NeedsInput,"Agent needs clarification",
             "I could not build a sufficiently evidenced proposal. Please clarify the product or service you want.",parsedBudget.Value,"GBP",[],

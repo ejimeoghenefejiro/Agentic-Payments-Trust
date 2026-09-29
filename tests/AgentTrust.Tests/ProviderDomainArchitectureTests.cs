@@ -116,6 +116,27 @@ public sealed class ProviderDomainArchitectureTests
         Assert.Empty(plan.Questions);
     }
 
+    [Fact]
+    public async Task CommerceAgentLoop_ExplainsAuthoritativeBudgetShortfall()
+    {
+        var connector=Grocery();var store=new InMemoryConsumerPlanningStore();
+        var configuration=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {{"ConsumerPilot:Planning:AgentLoopMaximumTurns","4"}}).Build();
+        var loop=new ConsumerCommerceAgentLoop(store,new TestAnalyst(),new BreakfastPlanner(),new AcceptingAuditor(),[],configuration);
+        var request=new ConsumerActionPlanningContext("principal-1",null,
+            "Find a good-value breakfast within £3.",connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector));
+        var provider=new ProviderPlanningSession(connector.MerchantId,connector.MerchantName,
+            CommerceCapabilityCatalog.Describe(connector),connector);
+
+        var plan=await loop.RunAsync(request,provider,CancellationToken.None);
+
+        Assert.Equal(PurchasePlanningStatus.Impossible,plan.Status);
+        Assert.Equal(9.90m,plan.EstimatedTotal);
+        Assert.Contains("£6.90 above",plan.Message);
+        Assert.Contains("£3.00 budget",plan.Message);
+    }
+
     private sealed class TestAnalyst:ICommerceAnalystWorker
     {
         public Task<CustomerRequestUnderstanding> AnalyzeAsync(string instruction,string? openObjective,IReadOnlySet<string> capabilities,CancellationToken cancellationToken)=>

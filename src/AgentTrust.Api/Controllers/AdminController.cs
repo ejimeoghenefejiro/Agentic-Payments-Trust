@@ -1,6 +1,7 @@
 using AgentTrust.Core;
 using AgentTrust.Core.Models;
 using AgentTrust.Data;
+using AgentTrust.Commerce;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,18 +9,22 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentTrust.Api.Controllers;
 
 [ApiController,Route("api/admin"),Authorize(Policy="AppAdmin")]
-public sealed class AdminController(AgentTrustDbContext db,IMerchantStore merchants):ControllerBase
+public sealed class AdminController(AgentTrustDbContext db,IMerchantStore merchants,MerchantConnectorRegistry connectors):ControllerBase
 {
     [HttpGet("overview")]
-    public async Task<IActionResult> Overview(CancellationToken token)=>Ok(new
+    public async Task<IActionResult> Overview(CancellationToken token)
     {
-        users=await db.ApplicationUsers.CountAsync(token),
-        merchants=await db.Merchants.CountAsync(token),
-        agents=await db.Agents.CountAsync(token),
-        activeRecurringOrders=await db.ConsumerPurchaseTasks.CountAsync(x=>x.Status=="Active",token),
-        activeAgentCycles=await db.CommerceOodaCycles.CountAsync(x=>x.Status!="Completed"&&x.Status!="Failed",token),
-        purchasesNeedingAttention=await db.PurchaseExecutions.CountAsync(x=>x.State=="Failed"||x.State=="Unknown"||x.State=="RequiresAction",token)
-    });
+        var merchantCount=ConnectedMerchants().Count;
+        return Ok(new
+        {
+            users=await db.ApplicationUsers.CountAsync(token),
+            merchants=merchantCount,
+            agents=await db.Agents.CountAsync(token),
+            activeRecurringOrders=await db.ConsumerPurchaseTasks.CountAsync(x=>x.Status=="Active"&&x.Schedule!="OneOff",token),
+            activeAgentCycles=await db.CommerceOodaCycles.CountAsync(x=>x.Status!="Completed"&&x.Status!="Failed",token),
+            purchasesNeedingAttention=await db.PurchaseExecutions.CountAsync(x=>x.State=="Failed"||x.State=="Unknown"||x.State=="RequiresAction",token)
+        });
+    }
 
     [HttpGet("users")]
     public async Task<IActionResult> Users(CancellationToken token)=>Ok(await db.ApplicationUsers.AsNoTracking().OrderByDescending(x=>x.CreatedAt).Select(x=>new{x.Id,x.PrincipalId,x.UserName,x.Email,x.CreatedAt}).Take(200).ToListAsync(token));
@@ -28,7 +33,14 @@ public sealed class AdminController(AgentTrustDbContext db,IMerchantStore mercha
     public async Task<IActionResult> Activity(CancellationToken token)=>Ok(await db.CommerceOodaCycles.AsNoTracking().OrderByDescending(x=>x.UpdatedAt).Select(x=>new{x.CycleId,x.PrincipalId,x.TaskId,x.PurchaseIntentId,x.Status,x.CycleNumber,x.UpdatedAt}).Take(100).ToListAsync(token));
 
     [HttpGet("merchants")]
-    public IActionResult Merchants()=>Ok(merchants.All().OrderBy(x=>x.Name));
+    public IActionResult Merchants()=>Ok(ConnectedMerchants());
+
+    private IReadOnlyList<Merchant> ConnectedMerchants()=>merchants.All()
+        .Concat(connectors.All.Select(x=>new Merchant(x.MerchantId,x.MerchantName,"Connected provider",true)))
+        .GroupBy(x=>x.MerchantId,StringComparer.OrdinalIgnoreCase)
+        .Select(x=>x.First())
+        .OrderBy(x=>x.Name)
+        .ToArray();
 
     [HttpPost("merchants"),Authorize(Policy="StepUp")]
     public IActionResult SaveMerchant(AdminMerchantRequest request)
